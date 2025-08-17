@@ -87,6 +87,7 @@
 #include "misc/sde.h"
 #include "misc/wintouchemu.h"
 #include "overlay/overlay.h"
+#include "overlay/windows/config.h"
 #include "overlay/windows/patch_manager.h"
 #include "overlay/windows/iidx_seg.h"
 #include "rawinput/rawinput.h"
@@ -1128,6 +1129,11 @@ int main_implementation(int argc, char *argv[]) {
         }
         // else - automatic (no value)
     }
+
+    if (options[launcher::Options::ShowAdvancedOptions].value_bool()) {
+        overlay::windows::SHOW_ADVANCED_TABS = true;
+    }
+
     if (cfg::CONFIGURATOR_STANDALONE) {
         // three reasons for this hardcoded value
         //   1) poll rate is tied to framerate in spicecfg, and the software ImGui renderer has

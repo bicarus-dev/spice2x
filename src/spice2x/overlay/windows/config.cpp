@@ -35,6 +35,8 @@
 
 namespace overlay::windows {
 
+    bool SHOW_ADVANCED_TABS = false;
+
     // same width as dummy marker
     const float INDENT = 22.f;
     const auto PROJECT_URL = "https://spice2x.github.io";
@@ -324,15 +326,19 @@ namespace overlay::windows {
                 }
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("Lights")) {
-                tab_selected_new = ConfigTab::CONFIG_TAB_LIGHTS;
-                ImGui::BeginChild("Lights", ImVec2(
-                        0, ImGui::GetWindowContentRegionMax().y - page_offset), false);
-                this->build_lights("Game", games::get_lights(this->games_selected_name));
-                ImGui::EndChild();
-                this->build_page_selector(&this->lights_page);
-                ImGui::EndTabItem();
+
+            if (overlay::windows::SHOW_ADVANCED_TABS || this->tab_selected == ConfigTab::CONFIG_TAB_LIGHTS) {
+                if (ImGui::BeginTabItem("Lights")) {
+                    tab_selected_new = ConfigTab::CONFIG_TAB_LIGHTS;
+                    ImGui::BeginChild("Lights", ImVec2(
+                            0, ImGui::GetWindowContentRegionMax().y - page_offset), false);
+                    this->build_lights("Game", games::get_lights(this->games_selected_name));
+                    ImGui::EndChild();
+                    this->build_page_selector(&this->lights_page);
+                    ImGui::EndTabItem();
+                }
             }
+
             if (ImGui::BeginTabItem("Cards")) {
                 tab_selected_new = ConfigTab::CONFIG_TAB_CARDS;
                 ImGui::BeginChild("Cards", ImVec2(
@@ -383,19 +389,23 @@ namespace overlay::windows {
                 ImGui::EndChild();
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("API")) {
-                tab_selected_new = ConfigTab::CONFIG_TAB_API;
 
-                // API options list
-                ImGui::BeginChild("ApiTab", ImVec2(
-                        0, ImGui::GetWindowContentRegionMax().y - page_offset2), false);
-                auto options = games::get_options(this->games_selected_name);
-                for (auto category : launcher::get_categories(launcher::Options::OptionsCategory::API)) {
-                    this->build_options(options, category);
+            if (overlay::windows::SHOW_ADVANCED_TABS || this->tab_selected == ConfigTab::CONFIG_TAB_API) {
+                if (ImGui::BeginTabItem("API")) {
+                    tab_selected_new = ConfigTab::CONFIG_TAB_API;
+
+                    // API options list
+                    ImGui::BeginChild("ApiTab", ImVec2(
+                            0, ImGui::GetWindowContentRegionMax().y - page_offset2), false);
+                    auto options = games::get_options(this->games_selected_name);
+                    for (auto category : launcher::get_categories(launcher::Options::OptionsCategory::API)) {
+                        this->build_options(options, category);
+                    }
+                    ImGui::EndChild();
+                    ImGui::EndTabItem();
                 }
-                ImGui::EndChild();
-                ImGui::EndTabItem();
             }
+
             if (ImGui::BeginTabItem("Options")) {
                 tab_selected_new = ConfigTab::CONFIG_TAB_OPTIONS;
 
@@ -422,77 +432,84 @@ namespace overlay::windows {
 
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("Advanced")) {
-                tab_selected_new = ConfigTab::CONFIG_TAB_ADVANCED;
 
-                // advanced options list
-                ImGui::BeginChild("AdvancedOptions", ImVec2(
-                        0, ImGui::GetWindowContentRegionMax().y - page_offset), false);
-                auto options = games::get_options(this->games_selected_name);
-                for (auto category : launcher::get_categories(launcher::Options::OptionsCategory::Advanced)) {
-                    this->build_options(options, category);
-                }
-                ImGui::EndChild();
+            if (overlay::windows::SHOW_ADVANCED_TABS || this->tab_selected == ConfigTab::CONFIG_TAB_ADVANCED) {
+                if (ImGui::BeginTabItem("Advanced")) {
+                    tab_selected_new = ConfigTab::CONFIG_TAB_ADVANCED;
 
-                // hidden options checkbox
-                ImGui::Checkbox("Show Hidden Options", &this->options_show_hidden);
-                if (!cfg::CONFIGURATOR_STANDALONE && this->options_dirty) {
-                    ImGui::SameLine();
-                    if (ImGui::Button("Restart Game")) {
-                        launcher::restart();
+                    // advanced options list
+                    ImGui::BeginChild("AdvancedOptions", ImVec2(
+                            0, ImGui::GetWindowContentRegionMax().y - page_offset), false);
+                    auto options = games::get_options(this->games_selected_name);
+                    for (auto category : launcher::get_categories(launcher::Options::OptionsCategory::Advanced)) {
+                        this->build_options(options, category);
                     }
-                    ImGui::SameLine();
-                    ImGui::HelpMarker("You need to restart the game to apply the changed settings.");
-                }
+                    ImGui::EndChild();
 
-                // reset configuration button
-                ImGui::SameLine();
-                if (ImGui::Button("Reset Configuration")) {
-                    ImGui::OpenPopup("Reset Config");
-                }
-                if (ImGui::BeginPopupModal("Reset Config", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-                    ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1.f),
-                            "Do you really want to reset your configuration for all games?\n"
-                            "Warning: This can't be reverted!");
-                    if (ImGui::Button("Yes")) {
-                        ::Config::getInstance().createConfigFile();
-                        launcher::restart();
+                    // hidden options checkbox
+                    ImGui::Checkbox("Show Hidden Options", &this->options_show_hidden);
+                    if (!cfg::CONFIGURATOR_STANDALONE && this->options_dirty) {
+                        ImGui::SameLine();
+                        if (ImGui::Button("Restart Game")) {
+                            launcher::restart();
+                        }
+                        ImGui::SameLine();
+                        ImGui::HelpMarker("You need to restart the game to apply the changed settings.");
                     }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Nope")) {
-                        ImGui::CloseCurrentPopup();
-                    }
-                    ImGui::EndPopup();
-                }
 
-                ImGui::EndTabItem();
+                    // reset configuration button
+                    ImGui::SameLine();
+                    if (ImGui::Button("Reset Configuration")) {
+                        ImGui::OpenPopup("Reset Config");
+                    }
+                    if (ImGui::BeginPopupModal("Reset Config", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                        ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1.f),
+                                "Do you really want to reset your configuration for all games?\n"
+                                "Warning: This can't be reverted!");
+                        if (ImGui::Button("Yes")) {
+                            ::Config::getInstance().createConfigFile();
+                            launcher::restart();
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button("Nope")) {
+                            ImGui::CloseCurrentPopup();
+                        }
+                        ImGui::EndPopup();
+                    }
+
+                    ImGui::EndTabItem();
+                }
             }
-            if (ImGui::BeginTabItem("Development")) {
-                tab_selected_new = ConfigTab::CONFIG_TAB_DEV;
 
-                // dev options list
-                ImGui::BeginChild("DevOptions", ImVec2(
-                        0, ImGui::GetWindowContentRegionMax().y - page_offset), false);
-                auto options = games::get_options(this->games_selected_name);
-                for (auto category : launcher::get_categories(launcher::Options::OptionsCategory::Dev)) {
-                    this->build_options(options, category);
-                }
+            if (overlay::windows::SHOW_ADVANCED_TABS || this->tab_selected == ConfigTab::CONFIG_TAB_DEV) {
+                if (ImGui::BeginTabItem("Development")) {
+                    tab_selected_new = ConfigTab::CONFIG_TAB_DEV;
 
-                ImGui::EndChild();
-
-                // hidden options checkbox
-                ImGui::Checkbox("Show Hidden Options", &this->options_show_hidden);
-                if (!cfg::CONFIGURATOR_STANDALONE && this->options_dirty) {
-                    ImGui::SameLine();
-                    if (ImGui::Button("Restart Game")) {
-                        launcher::restart();
+                    // dev options list
+                    ImGui::BeginChild("DevOptions", ImVec2(
+                            0, ImGui::GetWindowContentRegionMax().y - page_offset), false);
+                    auto options = games::get_options(this->games_selected_name);
+                    for (auto category : launcher::get_categories(launcher::Options::OptionsCategory::Dev)) {
+                        this->build_options(options, category);
                     }
-                    ImGui::SameLine();
-                    ImGui::HelpMarker("You need to restart the game to apply the changed settings.");
-                }
 
-                ImGui::EndTabItem();
+                    ImGui::EndChild();
+
+                    // hidden options checkbox
+                    ImGui::Checkbox("Show Hidden Options", &this->options_show_hidden);
+                    if (!cfg::CONFIGURATOR_STANDALONE && this->options_dirty) {
+                        ImGui::SameLine();
+                        if (ImGui::Button("Restart Game")) {
+                            launcher::restart();
+                        }
+                        ImGui::SameLine();
+                        ImGui::HelpMarker("You need to restart the game to apply the changed settings.");
+                    }
+
+                    ImGui::EndTabItem();
+                }
             }
+
             if (ImGui::BeginTabItem("Search")) {
                 tab_selected_new = ConfigTab::CONFIG_TAB_SEARCH;
 
@@ -3024,15 +3041,17 @@ namespace overlay::windows {
             }
 
             // game selector
-            ImGui::PushItemWidth(MIN(700, MAX(100, ImGui::GetWindowSize().x - 400)));
+            ImGui::PushItemWidth(MIN(650, MAX(100, ImGui::GetWindowSize().x - 450)));
             ImGui::Combo("##game_selector", game_selected, games_names.data(), (int)games_list.size());
             ImGui::PopItemWidth();
 
-            ImGui::BeginDisabled();
-            if (!avs::game::is_model("000")) {
-                ImGui::Text("%s", avs::game::get_identifier().c_str());
+            // advanced mode
+            if (ImGui::Checkbox("Show advanced options", &overlay::windows::SHOW_ADVANCED_TABS)) {
+                auto options = games::get_options(this->games_selected_name);
+                auto &option = options->at(launcher::Options::ShowAdvancedOptions);
+                option.value = overlay::windows::SHOW_ADVANCED_TABS ? "/ENABLED" : "";
+                ::Config::getInstance().updateBinding(games_list[games_selected], option);
             }
-            ImGui::EndDisabled();
 
             ImGui::EndMenuBar();
         }

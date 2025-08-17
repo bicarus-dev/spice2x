@@ -24,6 +24,8 @@ namespace overlay::windows {
         CONFIG_TAB_DEV,
         CONFIG_TAB_SEARCH,
     };
+    
+    extern bool SHOW_ADVANCED_TABS;
 
     class Config : public Window {
     private:
@@ -36,7 +38,6 @@ namespace overlay::windows {
 
         // tabs ui
         ConfigTab tab_selected = ConfigTab::CONFIG_TAB_INVALID;
-
         // buttons tab
         int buttons_page = 0;
         bool buttons_keyboard_state[0xFF];

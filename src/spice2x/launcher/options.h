@@ -248,6 +248,7 @@ namespace launcher {
             LovePlusPrinterOutputFormat,
             LovePlusPrinterJPGQuality,
             OptionConflictResolution,
+            ShowAdvancedOptions,
         };
 
         enum class OptionsCategory {

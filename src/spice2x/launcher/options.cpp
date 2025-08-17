@@ -2334,6 +2334,16 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .category = "Development",
         .disabled = true,
     },
+    {
+        // ShowAdvancedOptions
+        .title = "Show Advanced Options",
+        .name = "advanced",
+        .desc = "Show advanced options in configurator UI",
+        .type = OptionType::Bool,
+        .hidden = true,
+        .category = "Development",
+        .disabled = true,
+    },
 };
 
 const std::vector<std::string> &launcher::get_categories(Options::OptionsCategory category) {
