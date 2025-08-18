@@ -17,7 +17,6 @@ static const std::vector<std::string> CATEGORY_ORDER_BASIC = {
     "Game Options",
     "Common",
     "Network",
-    "Overlay",
     "Graphics (Common)",
     "Graphics (Full Screen)",
     "Graphics (Windowed)",
@@ -26,6 +25,7 @@ static const std::vector<std::string> CATEGORY_ORDER_BASIC = {
 
 static const std::vector<std::string> CATEGORY_ORDER_ADVANCED = {
     "Game Options (Advanced)",
+    "Overlay",
     "Network (Advanced)",
     "Performance",
     "Miscellaneous",

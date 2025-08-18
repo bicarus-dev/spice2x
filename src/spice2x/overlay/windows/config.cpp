@@ -2547,72 +2547,74 @@ namespace overlay::windows {
             read_card();
         }
 
-        ImGui::Spacing();
-        ImGui::SeparatorText("NFC card reader status");
-        ImGui::Spacing();
-        if (cfg::CONFIGURATOR_STANDALONE) {
-
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextWrapped("Test NFC card readers and card insertions over API");
-            ImGui::SameLine();
-            ImGui::HelpMarker(
-                "Enable card readers in Advanced tab, under Card Readers section, and restart. "
-                "Alternatively, launch spicecfg in command line and pass in the correct parameters. "
-                "BT5API readers currently do not show the card number in this UI.");
+        if (overlay::windows::SHOW_ADVANCED_TABS) {
             ImGui::Spacing();
+            ImGui::SeparatorText("NFC card reader status");
+            ImGui::Spacing();
+            if (cfg::CONFIGURATOR_STANDALONE) {
 
-            // show scanned card numbers
-            for (int player = 0; player < 2; player++) {
-                ImGui::PushID(("CardReaderDisp" + to_string(player)).c_str());
-                ImGui::TextColored(ImVec4(1, 0.7f, 0, 1), "Last card detected for player %i", player + 1);
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextWrapped("Test NFC card readers and card insertions over API");
+                ImGui::SameLine();
+                ImGui::HelpMarker(
+                    "Enable card readers in Advanced tab, under Card Readers section, and restart. "
+                    "Alternatively, launch spicecfg in command line and pass in the correct parameters. "
+                    "BT5API readers currently do not show the card number in this UI.");
+                ImGui::Spacing();
 
-                char card_uid[8];
-                const bool card_present = eamuse_scanned_card_peek_noninvasive(player, card_uid);
-                if (card_present) {
-                    ImGui::AlignTextToFramePadding();
-                    const auto card_str = bin2hex(card_uid, 8);
-                    ImGui::Text(
-                        "%s %s %s %s",
-                        card_str.substr(0, 4).c_str(),
-                        card_str.substr(4, 4).c_str(),
-                        card_str.substr(8, 4).c_str(),
-                        card_str.substr(12, 4).c_str()
-                        );
-                    ImGui::SameLine();
-                    if (ImGui::Button("Copy")) {
-                        clipboard::copy_text(card_str);
+                // show scanned card numbers
+                for (int player = 0; player < 2; player++) {
+                    ImGui::PushID(("CardReaderDisp" + to_string(player)).c_str());
+                    ImGui::TextColored(ImVec4(1, 0.7f, 0, 1), "Last card detected for player %i", player + 1);
+
+                    char card_uid[8];
+                    const bool card_present = eamuse_scanned_card_peek_noninvasive(player, card_uid);
+                    if (card_present) {
+                        ImGui::AlignTextToFramePadding();
+                        const auto card_str = bin2hex(card_uid, 8);
+                        ImGui::Text(
+                            "%s %s %s %s",
+                            card_str.substr(0, 4).c_str(),
+                            card_str.substr(4, 4).c_str(),
+                            card_str.substr(8, 4).c_str(),
+                            card_str.substr(12, 4).c_str()
+                            );
+                        ImGui::SameLine();
+                        if (ImGui::Button("Copy")) {
+                            clipboard::copy_text(card_str);
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button("Clear")) {
+                            eamuse_scanned_card_clear(player);
+                        }
+                    } else {
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextDisabled("Card not present");
                     }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Clear")) {
-                        eamuse_scanned_card_clear(player);
+
+                    ImGui::PopID();
+                    if (player == 0) {
+                        ImGui::Spacing();
+                        ImGui::Spacing();
                     }
-                } else {
-                    ImGui::AlignTextToFramePadding();
-                    ImGui::TextDisabled("Card not present");
                 }
 
-                ImGui::PopID();
-                if (player == 0) {
-                    ImGui::Spacing();
-                    ImGui::Spacing();
-                }
+            } else {
+                ImGui::Spacing();
+                ImGui::TextDisabled("%s", "Only available in spicecfg.");
+                ImGui::Spacing();
             }
 
-        } else {
             ImGui::Spacing();
-            ImGui::TextDisabled("%s", "Only available in spicecfg.");
+            ImGui::SeparatorText("More tips");
             ImGui::Spacing();
+            ImGui::BeginDisabled();
+            ImGui::TextWrapped("To debug card reader issues, run spice.exe -cfg in command line and check the log.");
+            ImGui::TextWrapped(
+                "If you have multiple players, try opening Card Manager window in the game. "
+                "Check the key bind in Overlay tab for Toggle Card Manager.");
+            ImGui::EndDisabled();
         }
-
-        ImGui::Spacing();
-        ImGui::SeparatorText("More tips");
-        ImGui::Spacing();
-        ImGui::BeginDisabled();
-        ImGui::TextWrapped("To debug card reader issues, run spice.exe -cfg in command line and check the log.");
-        ImGui::TextWrapped(
-            "If you have multiple players, try opening Card Manager window in the game. "
-            "Check the key bind in Overlay tab for Toggle Card Manager.");
-        ImGui::EndDisabled();
     }
 
     void Config::build_options(
