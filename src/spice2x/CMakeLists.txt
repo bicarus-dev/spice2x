@@ -665,6 +665,23 @@ IF(NOT MSVC)
     set_target_properties(spicetools_spice_linux PROPERTIES COMPILE_FLAGS "-m32" LINK_FLAGS "-m32")
 endif()
 
+# spice_portable.exe
+###########
+
+set(RESOURCE_FILES build/manifest.manifest build/manifest.rc build/icon.rc cfg/Win32D.rc)
+add_executable(spicetools_spice_portable ${SOURCE_FILES} ${RESOURCE_FILES})
+target_link_libraries(spicetools_spice_portable
+        PUBLIC d3d9 ws2_32 version comctl32 shlwapi iphlpapi hid secur32 setupapi psapi winmm winhttp
+        PRIVATE fmt-header-only discord-rpc imgui hash-library minhook imm32 dwmapi CpuFeatures::cpu_features)
+target_link_libraries(spicetools_spice_portable PUBLIC winscard)
+set_target_properties(spicetools_spice_portable PROPERTIES PREFIX "")
+set_target_properties(spicetools_spice_portable PROPERTIES OUTPUT_NAME "spice_portable")
+target_compile_definitions(spicetools_spice_portable PRIVATE SPICE_PORTABLE=1)
+
+IF(NOT MSVC)
+    set_target_properties(spicetools_spice_portable PROPERTIES COMPILE_FLAGS "-m32" LINK_FLAGS "-m32")
+endif()
+
 # spice64.exe
 #############
 
@@ -703,6 +720,26 @@ IF(NOT MSVC)
     set_target_properties(spicetools_spice64_linux PROPERTIES COMPILE_FLAGS "-m64" LINK_FLAGS "-m64")
 endif()
 
+# spice64_portable.exe
+#############
+
+set(RESOURCE_FILES build/manifest.manifest build/manifest64.rc build/icon.rc cfg/Win32D.rc)
+add_executable(spicetools_spice64_portable ${SOURCE_FILES} ${RESOURCE_FILES})
+
+# do NOT link against: mf, mfplat, mfreadwrite; otherwise unity games will break
+target_link_libraries(spicetools_spice64_portable
+        PUBLIC d3d9 ws2_32 version comctl32 shlwapi iphlpapi hid secur32 setupapi psapi winmm winhttp mfuuid strmiids dxva2
+        PRIVATE fmt-header-only discord-rpc imgui hash-library minhook imm32 dwmapi CpuFeatures::cpu_features)
+target_link_libraries(spicetools_spice64_portable PUBLIC winscard)
+set_target_properties(spicetools_spice64_portable PROPERTIES PREFIX "")
+set_target_properties(spicetools_spice64_portable PROPERTIES OUTPUT_NAME "spice64_portable")
+target_compile_definitions(spicetools_spice64_portable PRIVATE SPICE64=1)
+target_compile_definitions(spicetools_spice64_portable PRIVATE SPICE_PORTABLE=1)
+
+IF(NOT MSVC)
+    set_target_properties(spicetools_spice64_portable PROPERTIES COMPILE_FLAGS "-m64" LINK_FLAGS "-m64")
+endif()
+
 # spicecfg.exe
 ##############
 
@@ -737,6 +774,25 @@ target_compile_definitions(spicetools_cfg_linux PRIVATE NO_SCARD=1 PRIVATE SPICE
 
 if(NOT MSVC)
     set_target_properties(spicetools_cfg_linux PROPERTIES COMPILE_FLAGS "-m32" LINK_FLAGS "-m32")
+endif()
+
+# spicecfg_portable.exe
+##############
+
+set(SOURCE_FILES ${SOURCE_FILES} launcher/options.h launcher/options.cpp)
+set(RESOURCE_FILES cfg/manifest.manifest cfg/manifest.rc cfg/icon.rc cfg/Win32D.rc)
+add_executable(spicetools_cfg_portable WIN32 ${SOURCE_FILES} ${RESOURCE_FILES})
+target_link_libraries(spicetools_cfg_portable
+        PUBLIC ws2_32 version comctl32 shlwapi iphlpapi hid secur32 setupapi psapi winmm winhttp strmiids
+        PRIVATE fmt-header-only discord-rpc imgui hash-library minhook imm32 dwmapi CpuFeatures::cpu_features)
+target_link_libraries(spicetools_cfg_portable PUBLIC winscard)
+set_target_properties(spicetools_cfg_portable PROPERTIES PREFIX "")
+set_target_properties(spicetools_cfg_portable PROPERTIES OUTPUT_NAME "spicecfg_portable")
+target_compile_definitions(spicetools_cfg_portable PRIVATE SPICETOOLS_SPICECFG_STANDALONE=1)
+target_compile_definitions(spicetools_cfg_portable PRIVATE SPICE_PORTABLE=1)
+
+if(NOT MSVC)
+    set_target_properties(spicetools_cfg_portable PROPERTIES COMPILE_FLAGS "-m32" LINK_FLAGS "-m32")
 endif()
 
 # stubs
@@ -832,19 +888,19 @@ endif()
 ####################
 
 # output config
-set_target_properties(spicetools_cfg spicetools_cfg_linux
+set_target_properties(spicetools_cfg spicetools_cfg_linux spicetools_cfg_portable
         PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/spicetools")
 
 # output 32bit
-set_target_properties(spicetools_spice spicetools_spice_laa spicetools_spice_linux spicetools_stubs_kbt spicetools_stubs_kld spicetools_stubs_cpusbxpkm
+set_target_properties(spicetools_spice spicetools_spice_laa spicetools_spice_linux spicetools_spice_portable spicetools_stubs_kbt spicetools_stubs_kld spicetools_stubs_cpusbxpkm
         PROPERTIES
         ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/archive32"
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/spicetools/32"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/spicetools/32")
 
 # output 64bit
-set_target_properties(spicetools_spice64 spicetools_spice64_linux spicetools_stubs_kbt64 spicetools_stubs_kld64 spicetools_stubs_nvcuda spicetools_stubs_nvcuvid spicetools_stubs_nvEncodeAPI64
+set_target_properties(spicetools_spice64 spicetools_spice64_linux spicetools_spice64_portable spicetools_stubs_kbt64 spicetools_stubs_kld64 spicetools_stubs_nvcuda spicetools_stubs_nvcuvid spicetools_stubs_nvEncodeAPI64
         PROPERTIES
         ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/archive64"
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/spicetools/64"

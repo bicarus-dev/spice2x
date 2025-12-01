@@ -1,4 +1,5 @@
 #include "fileutils.h"
+#include "util/libutils.h"
 
 #include <fstream>
 
@@ -266,6 +267,19 @@ std::vector<uint8_t> *fileutils::bin_read(const std::filesystem::path &path) {
 }
 
 std::filesystem::path fileutils::get_config_file_path(const std::string module, const std::string filename, bool* file_exists) {
+
+#if SPICE_PORTABLE
+
+    const auto path = libutils::module_file_name(nullptr).parent_path() / L"spice2x";
+    fileutils::dir_create(path);
+    const auto local = path / filename;
+    if (file_exists) {
+        *file_exists = fileutils::file_exists(local);
+    }
+    return local;
+
+#else
+
     // try %appdata%\spice2x path first, if it exists
     const auto appdata_spice2x = std::filesystem::path(_wgetenv(L"APPDATA")) / "spice2x" / filename;
     if (fileutils::file_exists(appdata_spice2x)) {
@@ -291,6 +305,9 @@ std::filesystem::path fileutils::get_config_file_path(const std::string module, 
         *file_exists = false;
     }
     return appdata_spice2x;
+
+#endif
+
 }
 
 bool fileutils::write_config_file(const std::string_view &module, const std::filesystem::path path, std::string text) {

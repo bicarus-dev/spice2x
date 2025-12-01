@@ -1,5 +1,7 @@
 #include "config.h"
 #include "util/logging.h"
+#include "util/fileutils.h"
+#include "util/libutils.h"
 
 /*
  * This code absolutely sucks.
@@ -21,9 +23,17 @@ Config::Config() {
         this->configLocation = CONFIG_PATH_OVERRIDE;
         log_info("cfg", "using custom config file: {}", this->configLocation.string());
     } else {
+#if SPICE_PORTABLE
+        const auto path = libutils::module_file_name(nullptr).parent_path() / L"spice2x";
+        fileutils::dir_create(path);
+        this->configLocation = path / L"spicetools.xml";
+        log_info("cfg", "using local config file: {}", this->configLocation.string());
+#else
         this->configLocation = std::filesystem::path(_wgetenv(L"APPDATA")) / L"spicetools.xml";
         // avoids logging the expanded appdata path as it contains user name
         log_info("cfg", "using global config file: %appdata%\\spicetools.xml");
+#endif
+
     }
 
     this->configLocationTemp = this->configLocation;
