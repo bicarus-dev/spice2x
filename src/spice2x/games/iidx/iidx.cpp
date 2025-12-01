@@ -53,7 +53,7 @@ namespace games::iidx {
 
     // settings
     bool FLIP_CAMS = false;
-    bool DISABLE_CAMS = false;
+    std::optional<bool> DISABLE_CAMS;
     bool TDJ_CAMERA = false;
     bool TDJ_CAMERA_PREFER_16_9 = true;
     bool TDJ_MODE = false;
@@ -334,11 +334,6 @@ namespace games::iidx {
                     wintouchemu::INJECT_MOUSE_AS_WM_TOUCH = true;
                     wintouchemu::hook_title_ends("beatmania IIDX", "main", avs::game::DLL_INSTANCE);
                 }
-
-                // prevent crash on TDJ mode without correct DLL
-                if (!GetModuleHandle("nvcuda.dll")) {
-                    DISABLE_CAMS = true;
-                }
             }
 
             // insert BI2X hooks
@@ -399,7 +394,10 @@ namespace games::iidx {
                 "RegQueryValueExA", RegQueryValueExA_hook, avs::game::DLL_INSTANCE);
 
         // check if cam hook should be enabled
-        if (!DISABLE_CAMS) {
+        if (!DISABLE_CAMS.has_value()) {
+            log_fatal("iidx", "assertion failure - DISABLE_CAMS not set during attach");
+        }
+        if (!DISABLE_CAMS.value()) {
             init_legacy_camera_hook(FLIP_CAMS);
         }
 
@@ -409,15 +407,31 @@ namespace games::iidx {
 
     void IIDXGame::pre_attach() {
         Game::pre_attach();
+        auto options = games::get_options(eamuse_get_game());
 
         // environment variables must be set before the DLL is loaded as the VC++ runtime copies all
         // environment variables at startup
         if (SCREEN_MODE.has_value()) {
+            log_misc("iidx", "SCREEN_MODE env var set to {}", SCREEN_MODE.value().c_str());
             SetEnvironmentVariable("SCREEN_MODE", SCREEN_MODE.value().c_str());
         }
 
+        // check for cab camera access for the second time (first time was in launcher.cpp)
+        // this time, we are inside -iidx module hook, which means the user is likely NOT on a cab
+        // therefore, start with cams OFF by default, and allow user to forcibly override to ON
+        if (!games::iidx::DISABLE_CAMS.has_value()) {
+            games::iidx::DISABLE_CAMS = true;
+            if (options->at(launcher::Options::IIDXCabCamAccess).is_active() &&
+                options->at(launcher::Options::IIDXCabCamAccess).value_text() == "on") {
+                games::iidx::DISABLE_CAMS = false;
+            }
+            if (games::iidx::DISABLE_CAMS.value()) {
+                log_misc("iidx", "CONNECT_CAMERA env var set to 0");
+                SetEnvironmentVariable("CONNECT_CAMERA", "0");
+            }
+        }
+
         // windowed subscreen, enabled by default, unless turned off by user
-        auto options = games::get_options(eamuse_get_game());
         if (GRAPHICS_WINDOWED && !options->at(launcher::Options::spice2x_IIDXNoSub).value_bool()) {
             GRAPHICS_IIDX_WSUB = true;
         }
@@ -437,7 +451,7 @@ namespace games::iidx {
                 "!!! please do the following instead:                              !!!\n"
                 "!!!                                                               !!!\n"
                 "!!! Revert your changes to XML file so it says                    !!!\n"
-                "!!!     <model __type=\"str\">LDJ</model>                           !!!\n" 
+                "!!!     <model __type=\"str\">LDJ</model>                         !!!\n" 
                 "!!!                                                               !!!\n"
                 "!!! In SpiceCfg, enable 'IIDX TDJ Mode' or provide -iidxtdj flag  !!!\n"
                 "!!! in command line                                               !!!\n"
@@ -448,6 +462,32 @@ namespace games::iidx {
                 );
 
             log_fatal("iidx", "BAD MODEL NAME ERROR - TDJ specified, must be LDJ instead");
+        }
+
+        // check -monitor + TDJ mode
+        if (!GRAPHICS_WINDOWED &&
+            options->at(launcher::Options::DisplayAdapter).is_active() &&
+            TDJ_MODE) {
+            log_warning(
+                "iidx",
+                "\n\n!!! using -monitor option with TDJ is NOT recommended due to known  !!!\n"
+                "!!! compatibility issues with the game                              !!!\n"
+                "!!!                                                                 !!!\n"
+                "!!!   * game may launch in wrong resolution or refresh rate         !!!\n"
+                "!!!   * touch / mouse input may stop working in subscreen / overlay !!!\n"
+                "!!!                                                                 !!!\n"
+                "!!! recommendation is to NOT use -monitor and instead set the       !!!\n"
+                "!!! primary monitor in Windows settings before launching the game   !!!\n\n"
+                );
+
+            deferredlogs::defer_error_messages({
+                "-monitor option is NOT recommended when running with TDJ mode",
+                "    due to known compatibility issues with the game:",
+                "      * game may launch in wrong resolution or refresh rate",
+                "      * touch / mouse input may stop working in subscreen / overlay",
+                "    recommended fix is to NOT use -monitor and instead set the primary",
+                "    monitor in Windows settings before launching the game"
+                });
         }
     }
 
