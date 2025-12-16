@@ -8,6 +8,7 @@
 #include "util/logging.h"
 #include "util/utils.h"
 #include <mutex>
+#include "util/time.h"
 
 // constants
 const size_t STATUS_BUFFER_SIZE = 32;
@@ -161,6 +162,9 @@ static bool __cdecl ac_io_mdxf_update_control_status_buffer_impl(int node, MDXFP
 
     // Dance Dance Revolution
     if (avs::game::is_model("MDX")) {
+
+        log_misc("ddrtime", "[{}][{}] 1 = {}", static_cast<uint32_t>(source), node, get_performance_milliseconds());
+
         // Marks this module as actively being used, allowing this function to be called from other sources
         if (!IS_MDXF_ACTIVE && source == ARKMDXP4_POLL) {
             IS_MDXF_ACTIVE = true;
@@ -192,6 +196,12 @@ static bool __cdecl ac_io_mdxf_update_control_status_buffer_impl(int node, MDXFP
             default:
                 // return failure on unknown node
                 return false;
+        }
+
+        std::unique_lock<std::mutex> lock(*mutex, std::try_to_lock);
+        if (source == ARKMDXP4_POLL && !lock.owns_lock()) {
+            log_misc("ddrtime", "[{}][{}] gave up @ {}", static_cast<uint32_t>(source), node, get_performance_milliseconds());
+            return true;
         }
     
         // Sensor Map (LDUR):
@@ -230,6 +240,8 @@ static bool __cdecl ac_io_mdxf_update_control_status_buffer_impl(int node, MDXFP
         uint8_t up_down = 0;
         uint8_t left_right = 0;
 
+        // log_misc("ddrtime", "2 = {}", get_performance_milliseconds());
+
         if (GameAPI::Buttons::getState(RI_MGR, buttons.at(button_map[0]))) {
             up_down |= 0xF0;
         }
@@ -242,19 +254,23 @@ static bool __cdecl ac_io_mdxf_update_control_status_buffer_impl(int node, MDXFP
         if (GameAPI::Buttons::getState(RI_MGR, buttons.at(button_map[3]))) {
             left_right |= 0x0F;
         }
-        
+
         const uint16_t current_state = (uint16_t(up_down) << 8) | left_right;
+
+        log_misc("ddrtime", "[{}][{}] 2 = {}", static_cast<uint32_t>(source), node, get_performance_milliseconds());
+
         const uint64_t current_time = arkGetTickTime64();
-        
-        std::lock_guard<std::mutex> lock(*mutex);
-        
+
+
         // If state hasn't changed and the update was triggered externally, then don't advance head pointer or write a new entry
         if (source == EXTERNAL_POLL && *prev_state == current_state) {
+            log_misc("ddrtime", "[{}][{}] end\n", static_cast<uint32_t>(source), node);
             return true;
         }
         
         // If there's already an entry for this exact time, then don't advance head pointer or write a new entry 
         if (*prev_time >= current_time) {
+            log_misc("ddrtime", "[{}][{}] end\n", static_cast<uint32_t>(source), node);
             return true;
         }
         
@@ -277,6 +293,8 @@ static bool __cdecl ac_io_mdxf_update_control_status_buffer_impl(int node, MDXFP
         
         uint64_t time = start_time;
         uint16_t state = *prev_state;
+
+        log_misc("ddrtime", "[{}][{}] 4 = {}", static_cast<uint32_t>(source), node, get_performance_milliseconds());
         
         // Backfill entries a fixed interval apart from each other between prev_time and current_time
         while (time < stop_time) {
@@ -303,6 +321,8 @@ static bool __cdecl ac_io_mdxf_update_control_status_buffer_impl(int node, MDXFP
             // Write game time
             *(uint64_t*)&buffer_entry[0x18] = time;
         }
+
+        log_misc("ddrtime", "[{}][{}] 5 = {}\n", static_cast<uint32_t>(source), node, get_performance_milliseconds());
         
         *prev_state = current_state;
         *prev_time = current_time;
