@@ -163,7 +163,7 @@ namespace games::gitadora {
     void GitaDoraGame::pre_attach() {
         Game::pre_attach();
 
-        if (!cfg::CONFIGURATOR_STANDALONE) {
+        if (!cfg::CONFIGURATOR_STANDALONE && !is_arena_model()) {
             if (CAB_TYPE.has_value()) {
                 log_info("gitadora", "cab type: {}", CAB_TYPE.value());
             } else {
