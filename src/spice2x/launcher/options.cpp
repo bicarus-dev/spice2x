@@ -980,13 +980,16 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
     },
     {
         // GitaDoraWailHold
-        .title = "GitaDora Digital Wail Hold Time",
+        .title = "GitaDora Digital Wail Hold",
         .name = "gdwailhold",
-        .desc = "For digital wail input, how long (in milliseconds) to hold the wail state. "
-            "Default: 500ms. Set to 0 to disable",
+        .desc =
+            "For digital wail input, how long (in milliseconds) to hold the wail state. Default: 0 (off).\n\n"
+            "If you are playing with a guitar controller with a tilt sensor (bound in Buttons tab), leave this at 0 to accurately detect the tilt movement.\n\n"
+            "Otherwise, set this to 1000(ms), so that you can lightly tap the button to trigger wailing.\n\n"
+            "If you have bound tilt sensors in Analog tab, this has no effect",
         .type = OptionType::Integer,
         .game_name = "GitaDora",
-        .category = "Game Options (Advanced)",
+        .category = "Game Options",
     },
     {
         .title = "Force Load Jubeat Module",

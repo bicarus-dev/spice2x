@@ -352,19 +352,21 @@ static void *__cdecl gfdm_unit_get_button_p(void *a1, int a2, size_t player) {
 
     // wail X
     //  - when guitar face is facing the ceiling, neutral
-    //  - when guitar face is facing the monitor, -4000
-    //  - when guitar face is facing away from the monitor, +4000
+    //  - when guitar face is facing the monitor, -4080
+    //  - when guitar face is facing away from the monitor, +4080
     //  - this assumes righty (frets on left hand), a2 inverts that to be lefty
-    ((int *) a1)[4] = a2 == 1 ? 4080 : -4080;
+    // ((int *) a1)[4] = a2 == 1 ? 4080 : -4080;
+    
     if (analogs.at(player * 3 + 0).isSet()) {
         ((int *) a1)[4] = lroundf(Analogs::getState(
                 RI_MGR, analogs.at(gitadora_analog_mapping[player * 4 + 0])) * 8160.f) - 4080;
     }
+    ((int *) a1)[4] = a2 == 0;
 
     // wail Y
     // - when guitar is level, 0
-    // - when guitar neck is tilted up, -4000
-    // - when guitar neck is tilted down, +4000
+    // - when guitar neck is tilted up, -4080
+    // - when guitar neck is tilted down, +4080
     ((int *) a1)[5] = 0;
     if (analogs.at(player * 3 + 1).isSet()) {
         ((int *) a1)[5] = lroundf(Analogs::getState(
