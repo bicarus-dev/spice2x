@@ -1,5 +1,4 @@
 #include "socd_cleaner.h"
-
 #include "util/logging.h"
 
 #define DEBUG_VERBOSE 0
@@ -83,5 +82,53 @@ namespace socd {
             // SOCD: neutral when both are pressed
             return SocdNone;
         }
+    }
+
+    // first dimension: p1/p2
+    // second dimension: TiltUp / TiltDown
+    // value: last timestamp when it was on
+    static double most_recent_active[2][2] = {};
+
+    uint32_t TILT_HOLD_MS = 500;
+
+    TiltResult get_guitar_wail(uint8_t device, bool up, bool down, double time_now) {
+        if (device >= 2) {
+            log_fatal("socd", "invalid device index in socd_clean: {}", device);
+        }
+
+        if (up) {
+            most_recent_active[device][TiltUp] = time_now;
+        }
+        if (down) {
+            most_recent_active[device][TiltDown] = time_now;
+        }
+
+        log_debug(
+            "socd",
+            "p{} wail up={}, down={}",
+            device + 1,
+            most_recent_active[device][TiltUp],
+            most_recent_active[device][TiltDown]);
+
+        const auto delta_up = time_now - most_recent_active[device][TiltUp];
+        const auto delta_down = time_now - most_recent_active[device][TiltDown];
+        const bool is_up = delta_up <= TILT_HOLD_MS;
+        const bool is_down = delta_down <= TILT_HOLD_MS;
+
+        if (is_up && is_down) {
+            // both held: prefer the most recent input
+            if (delta_up <= delta_down) {
+                return TiltUp;
+            } else {
+                return TiltDown;
+            }
+        } else if (is_up) {
+            return TiltUp;
+        } else if (is_down) {
+            return TiltDown;
+        } else {
+            return TiltNone;
+        }
+
     }
 }

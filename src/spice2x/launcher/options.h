@@ -100,6 +100,7 @@ namespace launcher {
             LoadGitaDoraModule,
             GitaDoraTwoChannelAudio,
             GitaDoraCabinetType,
+            GitaDoraWailHold,
             LoadJubeatModule,
             LoadReflecBeatModule,
             LoadShogikaiModule,

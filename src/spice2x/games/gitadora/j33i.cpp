@@ -2,6 +2,7 @@
 #include "misc/eamuse.h"
 #include "util/utils.h"
 #include "util/time.h"
+#include "util/socd_cleaner.h"
 #include "io.h"
 #include "j33i.h"
 
@@ -123,9 +124,13 @@ bool games::gitadora::J33ISerialDevice::parse_msg(
             if (y_analog.isSet()) {
                 y = GameAPI::Analogs::getState(RI_MGR, y_analog) - 0.5f;
             }
-            if (GameAPI::Buttons::getState(RI_MGR, buttons[Buttons::GuitarP1WailUp])) {
+            const auto wail_up = GameAPI::Buttons::getState(RI_MGR, buttons[Buttons::GuitarP1WailUp]);
+            const auto wail_down = GameAPI::Buttons::getState(RI_MGR, buttons[Buttons::GuitarP1WailDown]);
+            const auto wail_result =
+                socd::get_guitar_wail(0, wail_up, wail_down, get_performance_milliseconds());
+            if (wail_result == socd::TiltUp) {
                 y = -0.5f;
-            } else if (GameAPI::Buttons::getState(RI_MGR, buttons[Buttons::GuitarP1WailDown])) {
+            } else if (wail_result == socd::TiltDown) {
                 y = 0.5f;
             }
 

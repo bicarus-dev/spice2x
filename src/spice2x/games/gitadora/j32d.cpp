@@ -3,7 +3,7 @@
 #include "util/utils.h"
 #include "io.h"
 #include "j32d.h"
-
+#include "util/socd_cleaner.h"
 
 using namespace acioemu;
 

@@ -979,6 +979,16 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .elements = {{"1", "DX"}, {"2", "SD"}, {"3", "SD2 - white cab"}},
     },
     {
+        // GitaDoraWailHold
+        .title = "GitaDora Digital Wail Hold Time",
+        .name = "gdwailhold",
+        .desc = "For digital wail input, how long (in milliseconds) to hold the wail state. "
+            "Default: 500ms. Set to 0 to disable",
+        .type = OptionType::Integer,
+        .game_name = "GitaDora",
+        .category = "Game Options (Advanced)",
+    },
+    {
         .title = "Force Load Jubeat Module",
         .name = "jb",
         .desc = "Manually enable Jubeat module",
