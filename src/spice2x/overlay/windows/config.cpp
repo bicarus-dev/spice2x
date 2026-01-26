@@ -283,11 +283,7 @@ namespace overlay::windows {
 
                 ImGui::EndChild();
 
-                // page selector
-                this->build_page_selector(&this->buttons_page);
-
                 // bind many
-                ImGui::SameLine();
                 if (ImGui::Checkbox("Bind Many", &buttons_many_active)) {
                     buttons_many_index = -1;
                     buttons_many_delay = 0;
@@ -324,12 +320,8 @@ namespace overlay::windows {
                 this->build_buttons("Overlay", games::get_buttons_overlay(this->games_selected_name));
                 ImGui::EndChild();
 
-                // page selector
-                this->build_page_selector(&this->buttons_page);
-
                 // standalone configurator extras
                 if (cfg::CONFIGURATOR_STANDALONE) {
-                    ImGui::SameLine();
                     ImGui::Checkbox("Enable Overlay in Config", &OVERLAY->hotkeys_enable);
                 }
                 ImGui::EndTabItem();
@@ -558,7 +550,6 @@ namespace overlay::windows {
         // did tab selection change?
         if (this->tab_selected != tab_selected_new) {
             this->tab_selected = tab_selected_new;
-            this->buttons_page = 0;
             this->lights_page = 0;
             buttons_many_active = false;
             buttons_many_index = -1;
@@ -604,7 +595,22 @@ namespace overlay::windows {
             if (buttons) {
                 const int button_it_max = max < 0 ? buttons->size() - 1 : std::min((int) buttons->size() - 1, max);
                 for (int button_it = min; button_it <= button_it_max; button_it++) {
-                    build_button(name, &buttons->at(button_it), button_it, button_it_max);
+
+                    Button &primary_button = buttons->at(button_it);
+
+                    // primary
+                    build_button(name, primary_button, &primary_button, button_it, button_it_max, 0);
+
+                    // alternatives
+                    int alt_index = 1; // 0 is primary
+                    for (auto &alt : primary_button.getAlternatives()) {
+                        if (alt.isTemporary() ||
+                            !(alt.getDeviceIdentifier().empty() && alt.getVKey() == INVALID_VKEY)) {
+                            build_button(name, primary_button, &alt, button_it, button_it_max, alt_index);
+                        }
+
+                        alt_index++;
+                    }
                 }
             }
 
@@ -612,15 +618,13 @@ namespace overlay::windows {
         }
     }
 
-    void Config::build_button(const std::string &name, Button *button, const int button_it, const int button_it_max) {
-        // get button based on page
-        auto &button_alternatives = button->getAlternatives();
-        if (this->buttons_page > 0) {
-            while ((int) button_alternatives.size() < this->buttons_page) {
-                button_alternatives.emplace_back(button->getName());
-            }
-            button = &button_alternatives.at(this->buttons_page - 1);
-        }
+    void Config::build_button(
+        const std::string &name,
+            Button &primary_button,
+            Button *button,
+            const int button_it,
+            const int button_it_max,
+            const int alt_index) {
 
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
@@ -629,12 +633,11 @@ namespace overlay::windows {
         ImGui::PushID(button);
         const auto button_name = button->getName();
         const auto button_display = button->getDisplayString(RI_MGR.get());
-        const auto button_state = GameAPI::Buttons::getState(RI_MGR, *button);
         const auto button_velocity = GameAPI::Buttons::getVelocity(RI_MGR, *button);
 
         // list entry
         bool style_color = false;
-        if (button_state == GameAPI::Buttons::State::BUTTON_PRESSED) {
+        if (GameAPI::Buttons::getState(RI_MGR, *button, false) == GameAPI::Buttons::State::BUTTON_PRESSED) {
             style_color = true;
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.7f, 0.f, 1.f));
         } else if (button_display.empty()) {
@@ -642,18 +645,25 @@ namespace overlay::windows {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.f));
         }
         ImGui::AlignTextToFramePadding();
-        ImGui::Indent(INDENT);
-        ImGui::Text("%s", button_name.c_str());
-        ImGui::Unindent(INDENT);
+        if (alt_index == 0) {
+            ImGui::Indent(INDENT);
+            ImGui::Text("%s", button_name.c_str());
+            ImGui::Unindent(INDENT);
+        } else {
+            ImGui::Indent(INDENT * 2);
+            ImGui::Text("+ alternate (%d)", alt_index);
+            ImGui::Unindent(INDENT * 2);
+        }
 
         ImGui::TableNextColumn();
         ImGui::AlignTextToFramePadding();
         ImGui::Text("%s", button_display.empty() ? "-" : button_display.c_str());
 
-        ImGui::TableNextColumn();
         if (style_color) {
             ImGui::PopStyleColor();
         }
+
+        ImGui::TableNextColumn();
 
         // normal button binding
         std::string bind_name = "Bind " + button_name;
@@ -713,7 +723,7 @@ namespace overlay::windows {
                 "Use 'Naive' for device independent binding using GetAsyncKeyState.");
         }
 
-        bind_button_popup(bind_name, button, button_it_max);
+        bind_button_popup(bind_name, button, button_it_max, alt_index);
 
         // naive binding
         ImGui::SameLine();
@@ -741,7 +751,7 @@ namespace overlay::windows {
                 "Use 'Naive' for device independent binding using GetAsyncKeyState.");
         }
 
-        naive_button_popup(naive_string, button, button_it_max);
+        naive_button_popup(naive_string, button, button_it_max, alt_index);
 
         // edit button
         ImGui::SameLine();
@@ -749,12 +759,12 @@ namespace overlay::windows {
         if (ImGui::Button("Edit")) {
             ImGui::OpenPopup(edit_name.c_str());
         }
-        edit_button_popup(edit_name, button_display, button, button_state, button_velocity);
+        edit_button_popup(edit_name, button_display, button, button_velocity, alt_index);
 
-        // clear button
-        if (button_display.size() > 0) {
+        if (button_display.size() > 0 || alt_index > 0) {
             ImGui::SameLine();
-            if (ImGui::Button("Clear")) {
+            // clear button
+            if (ImGui::Button("x")) {
                 button->setDeviceIdentifier("");
                 button->setVKey(0xFF);
                 button->setAnalogType(BAT_NONE);
@@ -764,9 +774,22 @@ namespace overlay::windows {
                 button->setInvert(false);
                 button->setLastState(GameAPI::Buttons::BUTTON_NOT_PRESSED);
                 button->setLastVelocity(0);
+                button->setTemporary(false);
                 ::Config::getInstance().updateBinding(
                         games_list[games_selected], *button,
-                        buttons_page - 1);
+                        alt_index - 1);
+            }
+        }
+
+        if (alt_index == 0) {
+            ImGui::SameLine();
+            if (ImGui::Button("Add")) {
+                Button temp_button(button->getName());
+                temp_button.setTemporary(true);
+                button->getAlternatives().push_back(temp_button);
+                ::Config::getInstance().updateBinding(
+                        games_list[games_selected], temp_button,
+                        button->getAlternatives().size() - 1);
             }
         }
 
@@ -774,7 +797,8 @@ namespace overlay::windows {
         ImGui::PopID();
     }
 
-    void Config::bind_button_popup(const std::string &bind_name, Button *button, const int button_it_max) {
+    void Config::bind_button_popup(
+        const std::string &bind_name, Button *button, const int button_it_max, const int alt_index) {
 
         if (ImGui::BeginPopupModal(bind_name.c_str(), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
 
@@ -804,7 +828,7 @@ namespace overlay::windows {
                                     button->setVKey(static_cast<unsigned short>(i));
                                     button->setAnalogType(BAT_NONE);
                                     ::Config::getInstance().updateBinding(
-                                            games_list[games_selected], *button, buttons_page - 1);
+                                            games_list[games_selected], *button, alt_index - 1);
                                     ImGui::CloseCurrentPopup();
                                     buttons_bind_active = false;
                                     inc_buttons_many_index(button_it_max);
@@ -835,7 +859,7 @@ namespace overlay::windows {
                                     button->setVKey(vkey);
                                     button->setAnalogType(BAT_NONE);
                                     ::Config::getInstance().updateBinding(
-                                            games_list[games_selected], *button, buttons_page - 1);
+                                            games_list[games_selected], *button, alt_index - 1);
                                     ImGui::CloseCurrentPopup();
                                     buttons_bind_active = false;
                                     inc_buttons_many_index(button_it_max);
@@ -868,7 +892,7 @@ namespace overlay::windows {
                                             button->setAnalogType(BAT_NONE);
                                             ::Config::getInstance().updateBinding(
                                                     games_list[games_selected], *button,
-                                                    buttons_page - 1);
+                                                    alt_index - 1);
                                             ImGui::CloseCurrentPopup();
                                             buttons_bind_active = false;
                                             inc_buttons_many_index(button_it_max);
@@ -911,7 +935,7 @@ namespace overlay::windows {
                                         button->setVelocityThreshold(0);
                                         ::Config::getInstance().updateBinding(
                                                 games_list[games_selected], *button,
-                                                buttons_page - 1);
+                                                alt_index - 1);
                                         ImGui::CloseCurrentPopup();
                                         buttons_bind_active = false;
                                         inc_buttons_many_index(button_it_max);
@@ -943,7 +967,7 @@ namespace overlay::windows {
                                         button->setVelocityThreshold(0);
                                         ::Config::getInstance().updateBinding(
                                                 games_list[games_selected], *button,
-                                                buttons_page - 1);
+                                                alt_index - 1);
                                         ImGui::CloseCurrentPopup();
                                         buttons_bind_active = false;
                                         inc_buttons_many_index(button_it_max);
@@ -992,7 +1016,7 @@ namespace overlay::windows {
                                         device->midiInfo->v2_velocity_threshold[button->getVKey()]);
                                     ::Config::getInstance().updateBinding(
                                             games_list[games_selected], *button,
-                                            buttons_page - 1);
+                                            alt_index - 1);
                                     ImGui::CloseCurrentPopup();
                                     buttons_bind_active = false;
                                     inc_buttons_many_index(button_it_max);
@@ -1015,7 +1039,7 @@ namespace overlay::windows {
                                         button->setVelocityThreshold(0);
                                         ::Config::getInstance().updateBinding(
                                                 games_list[games_selected], *button,
-                                                buttons_page - 1);
+                                                alt_index - 1);
                                         ImGui::CloseCurrentPopup();
                                         buttons_bind_active = false;
                                         inc_buttons_many_index(button_it_max);
@@ -1041,7 +1065,7 @@ namespace overlay::windows {
                                         button->setVelocityThreshold(0);
                                         ::Config::getInstance().updateBinding(
                                                 games_list[games_selected], *button,
-                                                buttons_page - 1);
+                                                alt_index - 1);
                                         ImGui::CloseCurrentPopup();
                                         buttons_bind_active = false;
                                         inc_buttons_many_index(button_it_max);
@@ -1067,7 +1091,7 @@ namespace overlay::windows {
                                         button->setVelocityThreshold(0);
                                         ::Config::getInstance().updateBinding(
                                                 games_list[games_selected], *button,
-                                                buttons_page - 1);
+                                                alt_index - 1);
                                         ImGui::CloseCurrentPopup();
                                         buttons_bind_active = false;
                                         inc_buttons_many_index(button_it_max);
@@ -1092,7 +1116,7 @@ namespace overlay::windows {
                                     button->setVelocityThreshold(0);
                                     ::Config::getInstance().updateBinding(
                                             games_list[games_selected], *button,
-                                            buttons_page - 1);
+                                            alt_index - 1);
                                     ImGui::CloseCurrentPopup();
                                     buttons_bind_active = false;
                                     inc_buttons_many_index(button_it_max);
@@ -1112,7 +1136,7 @@ namespace overlay::windows {
                                     button->setVelocityThreshold(0);
                                     ::Config::getInstance().updateBinding(
                                             games_list[games_selected], *button,
-                                            buttons_page - 1);
+                                            alt_index - 1);
                                     ImGui::CloseCurrentPopup();
                                     buttons_bind_active = false;
                                     inc_buttons_many_index(button_it_max);
@@ -1141,7 +1165,7 @@ namespace overlay::windows {
                                     button->setVelocityThreshold(0);
                                     ::Config::getInstance().updateBinding(
                                             games_list[games_selected], *button,
-                                            buttons_page - 1);
+                                            alt_index - 1);
                                     ImGui::CloseCurrentPopup();
                                     buttons_bind_active = false;
                                     inc_buttons_many_index(button_it_max);
@@ -1163,7 +1187,8 @@ namespace overlay::windows {
         }
     }
 
-    void Config::naive_button_popup(const std::string &naive_string, Button *button, const int button_it_max) {
+    void Config::naive_button_popup(
+        const std::string &naive_string, Button *button, const int button_it_max, const int alt_index) {
         if (ImGui::BeginPopupModal(naive_string.c_str(), NULL,
                 ImGuiWindowFlags_AlwaysAutoResize)) {
             buttons_bind_active = true;
@@ -1207,7 +1232,7 @@ namespace overlay::windows {
                                 button->setVelocityThreshold(0);
                                 ::Config::getInstance().updateBinding(
                                         games_list[games_selected], *button,
-                                        buttons_page - 1);
+                                        alt_index - 1);
                                 inc_buttons_many_index(button_it_max);
                             } else {
                                 buttons_many_index = -1;
@@ -1230,9 +1255,10 @@ namespace overlay::windows {
         const std::string &edit_name,
         const std::string &button_display,
         Button *button,
-        const GameAPI::Buttons::State button_state, 
-        const float button_velocity) {
+        const float button_velocity,
+        const int alt_index) {
 
+        const auto button_state = GameAPI::Buttons::getState(RI_MGR, *button, false);
         if (ImGui::BeginPopupModal(edit_name.c_str(), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
             bool dirty = false;
             auto device = RI_MGR->devices_get(button->getDeviceIdentifier());
@@ -1654,7 +1680,7 @@ namespace overlay::windows {
             // check if dirty
             if (dirty) {
                 ::Config::getInstance().updateBinding(
-                        games_list[games_selected], *button, buttons_page - 1);
+                        games_list[games_selected], *button, alt_index - 1);
             }
 
             // close button

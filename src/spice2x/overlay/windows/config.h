@@ -38,7 +38,6 @@ namespace overlay::windows {
         ConfigTab tab_selected = ConfigTab::CONFIG_TAB_INVALID;
 
         // buttons tab
-        int buttons_page = 0;
         bool buttons_keyboard_state[0xFF];
         bool buttons_bind_active = false;
         bool buttons_many_active = false;
@@ -79,15 +78,22 @@ namespace overlay::windows {
         std::string search_filter_in_lower_case = "";
 
         void build_buttons(const std::string &name, std::vector<Button> *buttons, int min = 0, int max = -1);
-        void build_button(const std::string &name, Button *button, const int button_it, const int button_it_max);
-        void bind_button_popup(const std::string &bind_name, Button *button, const int button_it_max);
-        void naive_button_popup(const std::string &naive_string, Button *button, const int button_it_max);
+        void build_button(
+            const std::string &name,
+            Button &primary_button,
+            Button *button,
+            const int button_it,
+            const int button_it_max,
+            const int alt_index);
+
+        void bind_button_popup(const std::string &bind_name, Button *button, const int button_it_max, const int alt_index);
+        void naive_button_popup(const std::string &naive_string, Button *button, const int button_it_max, const int alt_index);
         void edit_button_popup(
             const std::string &edit_name,
             const std::string &button_display,
             Button *button,
-            const GameAPI::Buttons::State button_state,
-            const float button_velocity);
+            const float button_velocity,
+            const int alt_index);
 
         void build_analogs(const std::string &name, std::vector<Analog> *analogs);
         void edit_analog_popup(Analog &analog);

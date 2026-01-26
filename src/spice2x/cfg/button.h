@@ -45,6 +45,7 @@ private:
     double debounce_up = 0.0;
     double debounce_down = 0.0;
     bool invert = false;
+    bool is_temporary = false;
 
     GameAPI::Buttons::State last_state = GameAPI::Buttons::BUTTON_NOT_PRESSED;
     float last_velocity = 0.f;
@@ -162,6 +163,14 @@ public:
 
     inline void setLastVelocity(float last_velocity) {
         this->last_velocity = last_velocity;
+    }
+
+    inline bool isTemporary() const {
+        return this->is_temporary;
+    }
+
+    inline void setTemporary(bool is_temporary) {
+        this->is_temporary = is_temporary;
     }
 
     inline unsigned short getVelocityThreshold() const {
