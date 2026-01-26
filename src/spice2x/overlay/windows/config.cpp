@@ -658,7 +658,9 @@ namespace overlay::windows {
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::HelpTooltip(
-                    "Add an alternate binding for this button (multi-key-binding).");
+                    "Add an alternate binding for this button (multi-key-binding). "
+                    "All of the key bindings are OR'd together. "
+                    "In the past, this was done using multiple pages of this tab.");
             }
         }
 
