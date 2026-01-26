@@ -181,6 +181,20 @@ public:
         this->velocity_threshold = velocity_threshold;
     }
 
+    inline bool isValid() {
+        // temporarily created by UI
+        if (isTemporary()) {
+            return true;
+        }
+
+        // nothing is set
+        if (getDeviceIdentifier().empty() && getVKey() == INVALID_VKEY) {
+            return false;
+        }
+
+        return true;
+    }
+
     void getMidiVKey(int& channel, int& index);
     void setMidiVKey(rawinput::RawInputManager* manager, bool is_note, int channel, int index);
 

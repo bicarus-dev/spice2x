@@ -574,9 +574,9 @@ namespace overlay::windows {
         ImGui::TextColored(ImVec4(1.f, 0.7f, 0, 1), "%s Buttons", name.c_str());
         ImGui::Separator();
         if (ImGui::BeginTable("ButtonsTable", 3, ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg)) {
-            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthFixed, overlay::apply_scaling(200));
             ImGui::TableSetupColumn("Binding", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, overlay::apply_scaling(240));
+            ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, overlay::apply_scaling(180));
 
             // check if empty
             if (!buttons || buttons->empty()) {
@@ -594,6 +594,7 @@ namespace overlay::windows {
             // check buttons
             if (buttons) {
                 const int button_it_max = max < 0 ? buttons->size() - 1 : std::min((int) buttons->size() - 1, max);
+
                 for (int button_it = min; button_it <= button_it_max; button_it++) {
 
                     Button &primary_button = buttons->at(button_it);
@@ -604,8 +605,7 @@ namespace overlay::windows {
                     // alternatives
                     int alt_index = 1; // 0 is primary
                     for (auto &alt : primary_button.getAlternatives()) {
-                        if (alt.isTemporary() ||
-                            !(alt.getDeviceIdentifier().empty() && alt.getVKey() == INVALID_VKEY)) {
+                        if (alt.isValid()) {
                             build_button(name, primary_button, &alt, button_it, button_it_max, alt_index);
                         }
 
@@ -635,42 +635,77 @@ namespace overlay::windows {
         const auto button_display = button->getDisplayString(RI_MGR.get());
         const auto button_velocity = GameAPI::Buttons::getVelocity(RI_MGR, *button);
 
-        // list entry
-        bool style_color = false;
-        if (GameAPI::Buttons::getState(RI_MGR, *button, false) == GameAPI::Buttons::State::BUTTON_PRESSED) {
-            style_color = true;
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.7f, 0.f, 1.f));
-        } else if (button_display.empty()) {
-            style_color = true;
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.f));
+        if (alt_index == 0 && primary_button.isValid()) {
+            if (ImGui::Button("+")) {
+                bool available = false;
+                // try to find one in the list that is not bound
+                for (auto &alt : primary_button.getAlternatives()) {
+                    if (!alt.isValid()) {
+                        alt.setTemporary(true);
+                        available = true;
+                        break;
+                    }
+                }
+                if (!available) {
+                    // add a new one to end of the list
+                    Button temp_button(button->getName());
+                    temp_button.setTemporary(true);
+                    button->getAlternatives().push_back(temp_button);
+                    ::Config::getInstance().updateBinding(
+                            games_list[games_selected], temp_button,
+                            button->getAlternatives().size() - 1);
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::HelpTooltip(
+                    "Add an alternate binding for this button (multi-key-binding).");
+            }
         }
-        ImGui::AlignTextToFramePadding();
+
+        // list entry
+
+        const bool primary_button_state = GameAPI::Buttons::getState(RI_MGR, primary_button);
+        const bool this_button_state = GameAPI::Buttons::getState(RI_MGR, *button, false);
+
+        ImGui::SameLine();
         if (alt_index == 0) {
             ImGui::Indent(INDENT);
+            ImGui::AlignTextToFramePadding();
+            if (primary_button_state) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.7f, 0.f, 1.f));
+            }
             ImGui::Text("%s", button_name.c_str());
+            if (primary_button_state) {
+                ImGui::PopStyleColor();
+            }
             ImGui::Unindent(INDENT);
         } else {
-            ImGui::Indent(INDENT * 2);
-            ImGui::Text("+ alternate (%d)", alt_index);
-            ImGui::Unindent(INDENT * 2);
+            ImGui::Indent(INDENT * 1.5f);
+            ImGui::AlignTextToFramePadding();
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.f));
+            ImGui::Text("alternate #%d", alt_index);
+            ImGui::PopStyleColor();
+            ImGui::Unindent(INDENT * 1.5f);
         }
 
         ImGui::TableNextColumn();
         ImGui::AlignTextToFramePadding();
-        ImGui::Text("%s", button_display.empty() ? "-" : button_display.c_str());
-
-        if (style_color) {
+        if (this_button_state) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.7f, 0.f, 1.f));
+        }
+        ImGui::Text("%s", button_display.empty() ? "" : button_display.c_str());
+        if (this_button_state) {
             ImGui::PopStyleColor();
         }
-
         ImGui::TableNextColumn();
 
         // normal button binding
         std::string bind_name = "Bind " + button_name;
         if (ImGui::Button("Bind")
             || (buttons_many_active && buttons_many_active_section == name && !buttons_bind_active
-            && !buttons_many_naive && buttons_many_index == button_it
-            && ++buttons_many_delay > 25)) {
+                && alt_index == 0
+                && !buttons_many_naive && buttons_many_index == button_it
+                && ++buttons_many_delay > 25)) {
             ImGui::OpenPopup(bind_name.c_str());
             buttons_bind_active = true;
             if (buttons_many_active) {
@@ -730,8 +765,9 @@ namespace overlay::windows {
         std::string naive_string = "Naive " + button_name;
         if (ImGui::Button("Naive")
             || (buttons_many_active && buttons_many_active_section == name && !buttons_bind_active
-            && buttons_many_naive && buttons_many_index == button_it
-            && ++buttons_many_delay > 25)) {
+                && alt_index == 0
+                && buttons_many_naive && buttons_many_index == button_it
+                && ++buttons_many_delay > 25)) {
             ImGui::OpenPopup(naive_string.c_str());
             if (buttons_many_active) {
                 buttons_many_index = button_it;
@@ -761,9 +797,9 @@ namespace overlay::windows {
         }
         edit_button_popup(edit_name, button_display, button, button_velocity, alt_index);
 
+        // clear button
         if (button_display.size() > 0 || alt_index > 0) {
             ImGui::SameLine();
-            // clear button
             if (ImGui::Button("x")) {
                 button->setDeviceIdentifier("");
                 button->setVKey(0xFF);
@@ -778,18 +814,6 @@ namespace overlay::windows {
                 ::Config::getInstance().updateBinding(
                         games_list[games_selected], *button,
                         alt_index - 1);
-            }
-        }
-
-        if (alt_index == 0) {
-            ImGui::SameLine();
-            if (ImGui::Button("Add")) {
-                Button temp_button(button->getName());
-                temp_button.setTemporary(true);
-                button->getAlternatives().push_back(temp_button);
-                ::Config::getInstance().updateBinding(
-                        games_list[games_selected], temp_button,
-                        button->getAlternatives().size() - 1);
             }
         }
 
