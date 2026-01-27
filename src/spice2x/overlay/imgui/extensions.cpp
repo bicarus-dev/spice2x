@@ -152,4 +152,20 @@ namespace ImGui {
         ImGui::PopID();
         return clicked;
     }
+
+    bool ClearButton(const std::string& tooltip) {
+        ImGui::PushID(tooltip.c_str());
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.f, 0.f, 0.f, 0.f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.4f, 0.4f, 0.4f, 0.5f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.97f, 0.97f, 0.97f, 1.00f));
+        bool clicked = ImGui::Button("x");
+        ImGui::PopStyleColor(4);
+        if (!tooltip.empty() && ImGui::IsItemHovered()) {
+            ImGui::SameLine();
+            ImGui::HelpTooltip(tooltip.c_str());
+        }
+        ImGui::PopID();
+        return clicked;
+    }
 }
