@@ -690,15 +690,53 @@ namespace overlay::windows {
             ImGui::Unindent(INDENT * 1.5f);
         }
 
+        // column for key binding
         ImGui::TableNextColumn();
         ImGui::AlignTextToFramePadding();
         if (this_button_state) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.7f, 0.f, 1.f));
         }
-        ImGui::Text("%s", button_display.empty() ? "" : button_display.c_str());
+        std::string bind_text = "";
+        bool overflow = false;
+        if (button_display.length() >= 46) {
+            bind_text = fmt::format("{:.42s}...", button_display);
+            overflow = true;
+        } else {
+            bind_text = button_display;
+        }
+        ImGui::Text("%s", bind_text.c_str());
         if (this_button_state) {
             ImGui::PopStyleColor();
         }
+        if (ImGui::IsItemHovered() & overflow) {
+            ImGui::SameLine();
+            ImGui::HelpTooltip(button_display.c_str());
+        }
+        
+        // clear button
+        if (button_display.size() > 0 || alt_index > 0) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("x")) {
+                button->setDeviceIdentifier("");
+                button->setVKey(0xFF);
+                button->setAnalogType(BAT_NONE);
+                button->setDebounceUp(0.0);
+                button->setDebounceDown(0.0);
+                button->setVelocityThreshold(0);
+                button->setInvert(false);
+                button->setLastState(GameAPI::Buttons::BUTTON_NOT_PRESSED);
+                button->setLastVelocity(0);
+                button->setTemporary(false);
+                ::Config::getInstance().updateBinding(
+                        games_list[games_selected], *button,
+                        alt_index - 1);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SameLine();
+                ImGui::HelpTooltip("Remove");
+            }
+        }
+
         ImGui::TableNextColumn();
 
         // normal button binding
@@ -798,26 +836,6 @@ namespace overlay::windows {
             ImGui::OpenPopup(edit_name.c_str());
         }
         edit_button_popup(edit_name, button_display, button, button_velocity, alt_index);
-
-        // clear button
-        if (button_display.size() > 0 || alt_index > 0) {
-            ImGui::SameLine();
-            if (ImGui::Button("x")) {
-                button->setDeviceIdentifier("");
-                button->setVKey(0xFF);
-                button->setAnalogType(BAT_NONE);
-                button->setDebounceUp(0.0);
-                button->setDebounceDown(0.0);
-                button->setVelocityThreshold(0);
-                button->setInvert(false);
-                button->setLastState(GameAPI::Buttons::BUTTON_NOT_PRESSED);
-                button->setLastVelocity(0);
-                button->setTemporary(false);
-                ::Config::getInstance().updateBinding(
-                        games_list[games_selected], *button,
-                        alt_index - 1);
-            }
-        }
 
         // clean up
         ImGui::PopID();
