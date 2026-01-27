@@ -643,18 +643,11 @@ namespace overlay::windows {
 
         ImGui::SameLine();
         if (alt_index == 0) {
-            ImGui::Indent(INDENT);
             ImGui::AlignTextToFramePadding();
-            if (primary_button_state) {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.7f, 0.f, 1.f));
-            }
-            ImGui::Text("%s", button_name.c_str());
-            if (primary_button_state) {
-                ImGui::PopStyleColor();
-            }
-
-            ImGui::SameLine();
-            if (ImGui::SmallButton("+")) {
+            if (ImGui::AddButton(
+                    "Add an alternate binding for this button (multi-key binding). "
+                    "All of the key bindings are OR'd together. "
+                    "In the past, this was done using multiple pages of this tab.")) {
                 bool available = false;
                 // try to find one in the list that is not bound
                 for (auto &alt : primary_button.getAlternatives()) {
@@ -676,21 +669,25 @@ namespace overlay::windows {
                             button->getAlternatives().size() - 1);
                 }
             }
-            if (ImGui::IsItemHovered()) {
-                ImGui::HelpTooltip(
-                    "Add an alternate binding for this button (multi-key binding). "
-                    "All of the key bindings are OR'd together. "
-                    "In the past, this was done using multiple pages of this tab.");
+            if (primary_button_state) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.7f, 0.f, 1.f));
             }
-
-            ImGui::Unindent(INDENT);
+            ImGui::SameLine();
+            ImGui::Text("%s", button_name.c_str());
+            if (primary_button_state) {
+                ImGui::PopStyleColor();
+            }
         } else {
-            ImGui::Indent(INDENT * 1.5f);
+            ImGui::Indent(INDENT * 2.f);
             ImGui::AlignTextToFramePadding();
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.f));
             ImGui::Text("alternate #%d", alt_index);
             ImGui::PopStyleColor();
-            ImGui::Unindent(INDENT * 1.5f);
+            ImGui::Unindent(INDENT * 2.f);
+            ImGui::SameLine();
+            if (ImGui::DeleteButton("Remove")) { 
+                clear_button(button, true, alt_index);
+            }
         }
 
         // column for key binding
@@ -710,22 +707,10 @@ namespace overlay::windows {
             ImGui::PopStyleColor();
         }
         // clear button
-        if (button_display.size() > 0 || alt_index > 0) {
+        if (button_display.size() > 0) {
             ImGui::SameLine();
-            if (ImGui::DeleteButton("Click to reset")) { 
-                button->setDeviceIdentifier("");
-                button->setVKey(0xFF);
-                button->setAnalogType(BAT_NONE);
-                button->setDebounceUp(0.0);
-                button->setDebounceDown(0.0);
-                button->setVelocityThreshold(0);
-                button->setInvert(false);
-                button->setLastState(GameAPI::Buttons::BUTTON_NOT_PRESSED);
-                button->setLastVelocity(0);
-                button->setTemporary(false);
-                ::Config::getInstance().updateBinding(
-                        games_list[games_selected], *button,
-                        alt_index - 1);
+            if (ImGui::DeleteButton("Unbind")) { 
+                clear_button(button, false, alt_index);
             }
         }
 
@@ -837,6 +822,24 @@ namespace overlay::windows {
 
         // clean up
         ImGui::PopID();
+    }
+
+    void Config::clear_button(Button *button, const bool clear_temp, const int alt_index) {
+        button->setDeviceIdentifier("");
+        button->setVKey(0xFF);
+        button->setAnalogType(BAT_NONE);
+        button->setDebounceUp(0.0);
+        button->setDebounceDown(0.0);
+        button->setVelocityThreshold(0);
+        button->setInvert(false);
+        button->setLastState(GameAPI::Buttons::BUTTON_NOT_PRESSED);
+        button->setLastVelocity(0);
+        if (clear_temp) {
+            button->setTemporary(false);
+        }
+        ::Config::getInstance().updateBinding(
+                games_list[games_selected], *button,
+                alt_index - 1);
     }
 
     void Config::bind_button_popup(
