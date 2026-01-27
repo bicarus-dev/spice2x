@@ -575,9 +575,9 @@ namespace overlay::windows {
         ImGui::Separator();
         if (ImGui::BeginTable("ButtonsTable", 3, ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg)) {
             // longest column is probably "Toggle Virtual Keypad P1" in Overlay tab
-            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthFixed, overlay::apply_scaling(210));
+            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthFixed, overlay::apply_scaling(220));
             ImGui::TableSetupColumn("Binding", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, overlay::apply_scaling(180));
+            ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, overlay::apply_scaling(150));
 
             // check if empty
             if (!buttons || buttons->empty()) {
@@ -699,17 +699,20 @@ namespace overlay::windows {
         if (this_button_state) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.7f, 0.f, 1.f));
         }
-        ImGui::Text("%s", button_display.size() > 0 ? button_display.c_str() : "");
+        std::string button_text = button_display.size() > 0 ? button_display.c_str() : "";
+        button_text = ImGui::TruncateText(button_text, ImGui::GetContentRegionAvail().x - overlay::apply_scaling(20));
+        ImGui::Text("%s", button_text.c_str());
+        if (ImGui::IsItemHovered() && button_display.size() > 0) {
+            ImGui::SameLine();
+            ImGui::HelpTooltip(button_display.c_str());
+        }
         if (this_button_state) {
             ImGui::PopStyleColor();
         }
-
-        // column for buttons
-        ImGui::TableNextColumn();
-
         // clear button
         if (button_display.size() > 0 || alt_index > 0) {
-            if (ImGui::Button("x")) {
+            ImGui::SameLine();
+            if (ImGui::DeleteButton("Click to reset")) { 
                 button->setDeviceIdentifier("");
                 button->setVKey(0xFF);
                 button->setAnalogType(BAT_NONE);
@@ -724,20 +727,12 @@ namespace overlay::windows {
                         games_list[games_selected], *button,
                         alt_index - 1);
             }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SameLine();
-                ImGui::HelpTooltip("Clear");
-            }
-        } else {
-            ImGui::Dummy(
-                ImVec2(
-                    ImGui::CalcTextSize("x").x + ImGui::GetStyle().FramePadding.x * 2,
-                    0.1f)
-                );
         }
 
+        // column for buttons
+        ImGui::TableNextColumn();
+
         // normal button binding
-        ImGui::SameLine();
         std::string bind_name = "Bind " + button_name;
         if (ImGui::Button("Bind")
             || (buttons_many_active && buttons_many_active_section == name && !buttons_bind_active
