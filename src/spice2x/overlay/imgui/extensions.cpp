@@ -93,6 +93,7 @@ namespace ImGui {
                 thickness);
     }
 
+
     std::string TruncateText(const std::string& p_text, float p_truncated_width) {
         std::string truncated_text = p_text;
 
