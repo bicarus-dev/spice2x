@@ -35,4 +35,5 @@ private:
     void dump_devices();
     std::string get_device_id(IMMDevice *pDevice);
     std::string get_device_friendly_name(IMMDevice *pDevice);
+    std::string get_device_format(IMMDevice *pDevice);
 };

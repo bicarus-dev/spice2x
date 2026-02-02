@@ -149,9 +149,10 @@ void WrappedIMMDeviceEnumerator::dump_devices() {
     for (UINT i = 0; i < count; i++) {
         IMMDevice *pDevice;
         if (SUCCEEDED(ppDevices->Item(i, &pDevice))) {
-            log_info("audio", "    device [{}]:", i);
-            log_info("audio", "        device ID: {}", get_device_id(pDevice));
-            log_info("audio", "        friendly name: {}", get_device_friendly_name(pDevice));
+            log_info("audio", "  device [{}]:", i);
+            // log_info("audio", "    device ID: {}", get_device_id(pDevice));
+            log_info("audio", "    name: {}", get_device_friendly_name(pDevice));
+            log_info("audio", "    format: {}", get_device_format(pDevice));
             pDevice->Release();
         }
     }
@@ -172,7 +173,7 @@ std::string WrappedIMMDeviceEnumerator::get_device_id(IMMDevice *pDevice) {
 
 std::string WrappedIMMDeviceEnumerator::get_device_friendly_name(IMMDevice *pDevice) {
     // dump friendly name of audio endpoint
-    // https://learn.microsoft.com/en-us/windows/win32/coreaudio/device-properties?redirectedfrom=MSDN
+    // https://learn.microsoft.com/en-us/windows/win32/coreaudio/pkey-device-friendlyname
     IPropertyStore *pProps = nullptr;
     HRESULT hr;
 
@@ -189,7 +190,7 @@ std::string WrappedIMMDeviceEnumerator::get_device_friendly_name(IMMDevice *pDev
         key.fmtid = IDevice_FriendlyName;
         PropVariantInit(&varName);
         hr = pProps->GetValue(key, &varName);
-        if (SUCCEEDED(hr) && varName.vt != VT_EMPTY) {
+        if (SUCCEEDED(hr) && varName.vt == VT_LPWSTR) {
             std::string result = ws2s(varName.pwszVal);
             PropVariantClear(&varName);
             pProps->Release();
@@ -201,6 +202,48 @@ std::string WrappedIMMDeviceEnumerator::get_device_friendly_name(IMMDevice *pDev
         pProps->Release();
     }
     return "";
+}
+
+std::string WrappedIMMDeviceEnumerator::get_device_format(IMMDevice *pDevice) {
+    // https://learn.microsoft.com/en-us/windows/win32/coreaudio/pkey-audioengine-deviceformat
+    IPropertyStore *pProps = nullptr;
+    HRESULT hr;
+    std::string result = "";
+
+    hr = pDevice->OpenPropertyStore(STGM_READ, &pProps);
+    if (SUCCEEDED(hr)) {
+        PROPVARIANT varName;
+        PROPERTYKEY key;
+
+        // from mmdeviceapi.h
+        // PKEY_AudioEngine_DeviceFormat
+        GUID IDevice_DeviceFormat = { 0xf19f064d, 0x82c, 0x4e27, 0xbc, 0x73, 0x68, 0x82, 0xa1, 0xbb, 0x8e, 0x4c }; // 0
+        key.pid = 0;
+        key.fmtid = IDevice_DeviceFormat;
+        PropVariantInit(&varName);
+        hr = pProps->GetValue(key, &varName);
+        if (SUCCEEDED(hr) && varName.vt == VT_BLOB && varName.blob.cbSize > 0) {
+            const auto format = reinterpret_cast<WAVEFORMATEX*>(varName.blob.pBlobData);
+
+            result = fmt::format(
+                "formattag={}, ch={}, samplespersec={}, bytespersec={}, blockalign={}, bits={}",
+                format->wFormatTag,
+                format->nChannels,
+                format->nSamplesPerSec,
+                format->nAvgBytesPerSec,
+                format->nBlockAlign,
+                format->wBitsPerSample);
+            
+            PropVariantClear(&varName);
+            pProps->Release();
+            return result;
+        }
+        PropVariantClear(&varName);
+    }
+    if (pProps) {
+        pProps->Release();
+    }
+    return result;
 }
 
 HRESULT STDMETHODCALLTYPE WrappedIMMDeviceEnumerator::GetDefaultAudioEndpoint(
