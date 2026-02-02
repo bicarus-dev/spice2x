@@ -24,8 +24,6 @@ namespace hooks::audio {
     extern size_t ASIO_DRIVER_ID;
     extern bool ASIO_FORCE_UNLOAD_ON_STOP;
     extern bool LOW_LATENCY_SHARED_WASAPI;
-
-    extern std::optional<std::string> DEFAULT_IMM_DEVICE_ID;
     
     void init();
     void stop();
