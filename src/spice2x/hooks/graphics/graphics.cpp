@@ -12,6 +12,7 @@
 #include "cfg/screen_resize.h"
 #include "games/ddr/ddr.h"
 #include "games/gitadora/gitadora.h"
+#include "games/popn/popn.h"
 #include "games/iidx/iidx.h"
 #include "hooks/graphics/backends/d3d9/d3d9_backend.h"
 #include "launcher/shutdown.h"
@@ -35,6 +36,7 @@ struct CaptureData {
 HWND TDJ_SUBSCREEN_WINDOW = nullptr;
 HWND SDVX_SUBSCREEN_WINDOW = nullptr;
 HWND GFDM_SUBSCREEN_WINDOW = nullptr;
+HWND POPN_SUBSCREEN_WINDOW = nullptr;
 
 // icon
 static HICON WINDOW_ICON = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(MAINICON));
@@ -413,16 +415,20 @@ static HWND WINAPI CreateWindowExA_hook(DWORD dwExStyle, LPCSTR lpClassName, LPC
     bool is_tdj_sub_window = avs::game::is_model("LDJ") && window_name.ends_with(" sub");
     bool is_sdvx_sub_window = avs::game::is_model("KFC") && window_name.ends_with(" Sub Screen");
     bool is_gfdm_sub_window = games::gitadora::is_arena_model() && window_name.ends_with("SMALL");
+    bool is_popn_sub_window = games::popn::is_pikapika_model() && window_name.ends_with(POPN_PIKA_SUB_WINDOW);
 
     // hide maximize button (prevent misaligned touches)
-    if ((is_tdj_sub_window && GRAPHICS_IIDX_WSUB) || is_sdvx_sub_window || is_gfdm_sub_window) {
+    if ((is_tdj_sub_window && GRAPHICS_IIDX_WSUB) ||
+        is_sdvx_sub_window ||
+        is_gfdm_sub_window ||
+        is_popn_sub_window) {
         dwStyle &= ~(WS_MAXIMIZEBOX);
     }
     // mouse clicks become misaligned when resized
     if (is_gfdm_sub_window) {
         dwStyle &= ~(WS_SIZEBOX);
     }
-    if ((is_tdj_sub_window || is_sdvx_sub_window) && GRAPHICS_WSUB_BORDERLESS) {
+    if ((is_tdj_sub_window || is_sdvx_sub_window || is_popn_sub_window) && GRAPHICS_WSUB_BORDERLESS) {
         dwStyle &= ~(WS_OVERLAPPEDWINDOW);
     }
 

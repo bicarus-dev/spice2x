@@ -2,7 +2,9 @@
 
 #include "games/game.h"
 
+// TODO
 #define POPN_PIKA_ENABLE 0
+#define POPN_PIKA_SUB_WINDOW " sub"
 
 namespace games::popn {
 
