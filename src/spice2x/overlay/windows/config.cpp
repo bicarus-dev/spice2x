@@ -2837,7 +2837,21 @@ namespace overlay::windows {
         
         // light name
         if (alt_index == 0) {
+            std::optional<ImVec4> color_override;
+            if (light->getName().ends_with(" R") || light->getName().ends_with(" Red")) {
+                color_override = ImVec4(0.9f, 0.2f, 0.2f, 1.f);
+            } else if (light->getName().ends_with(" G") || light->getName().ends_with(" Green")) {
+                color_override = ImVec4(0.2f, 0.9f, 0.2f, 1.f);
+            } else if (light->getName().ends_with(" B") || light->getName().ends_with(" Blue")) {
+                color_override = ImVec4(0.2f, 0.2f, 0.9f, 1.f);
+            }
+            if (color_override.has_value()) {
+                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, color_override.value());
+            }
             ImGui::ProgressBar(light_state, ImVec2(32.f, 0));
+            if (color_override.has_value()) {
+                ImGui::PopStyleColor();
+            }
             ImGui::SameLine();
             ImGui::AlignTextToFramePadding();
             ImGui::TextTruncated(
