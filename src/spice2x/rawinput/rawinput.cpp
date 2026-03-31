@@ -1489,6 +1489,9 @@ LRESULT CALLBACK rawinput::RawInputManager::input_wnd_proc(
 
             // get reference
             auto ref = reinterpret_cast<RawInputManager *>(GetWindowLongPtrW(hWnd, GWLP_USERDATA));
+            if (ref == nullptr) {
+                break;
+            }
 
             // get raw input data
             UINT data_size = 0;
