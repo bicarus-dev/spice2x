@@ -38,7 +38,7 @@ namespace unity_utils {
 
         // monitor
         if (D3D9_ADAPTER.has_value()) {
-            args += fmt::format(" -monitor {}", D3D9_ADAPTER.value());
+            args += fmt::format(" -dxmainadapter {}", D3D9_ADAPTER.value());
         }
 
         return args;

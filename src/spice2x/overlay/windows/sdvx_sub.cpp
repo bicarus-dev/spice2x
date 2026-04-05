@@ -13,7 +13,7 @@ namespace overlay::windows {
         if (!games::sdvx::is_valkyrie_model()) {
             this->disabled_message = "Valkyrie Model mode is not enabled!";
         } else if (games::sdvx::SHOW_VM_MONITOR_WARNING) {
-            this->disabled_message = "VM mode subscreen overlay is not compatible with -monitor option";
+            this->disabled_message = "VM mode subscreen overlay is not compatible with -dxmainadapter option, use -mainmonitor instead";
         } else if (GRAPHICS_WINDOWED) {
             if (GRAPHICS_PREVENT_SECONDARY_WINDOW) {
                 this->disabled_message = "Subscreen has been disabled by the user (-sdvxnosub).";

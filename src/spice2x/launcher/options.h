@@ -27,7 +27,7 @@ namespace launcher {
             CaptureCursor,
             ShowCursor,
             PrimaryMonitor,
-            DX9DisplayAdapter,
+            DXDisplayAdapter,
             GraphicsForceSingleAdapter,
             GraphicsForceRefresh,
             FullscreenResolution,

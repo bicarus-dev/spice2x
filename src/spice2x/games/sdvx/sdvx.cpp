@@ -350,28 +350,28 @@ namespace games::sdvx {
         }
 
 #ifdef SPICE64 // SDVX5+ specific code
-        // check -monitor + UFC mode
+        // check -dxmainadapter + UFC mode
         if (!GRAPHICS_WINDOWED && D3D9_ADAPTER.has_value() && is_valkyrie_model()) {
             SHOW_VM_MONITOR_WARNING = true;
             log_warning(
-                "sdvx",
-                "\n\n!!! using -monitor option with VM mode is NOT recommended due to    !!!\n"
-                "!!! known compatibility issues with the game                        !!!\n"
+                "iidx",
+                "\n\n"
+                "!!! using -dxmainadapter option with Valkyrie mode is NOT          !!!\n"
+                "!!! recommended due to known compatibility issues with the game     !!!\n"
                 "!!!                                                                 !!!\n"
                 "!!!   * game may launch in wrong resolution or refresh rate         !!!\n"
                 "!!!   * touch / mouse input may stop working in subscreen / overlay !!!\n"
                 "!!!                                                                 !!!\n"
-                "!!! recommendation is to NOT use -monitor and instead set the       !!!\n"
-                "!!! primary monitor in Windows settings before launching the game   !!!\n\n"
+                "!!! recommendation is to use the Change Main Monitor (-mainmonitor) !!!\n"
+                "!!! option instead of -dxmainadapter                                !!!\n\n"
                 );
 
             deferredlogs::defer_error_messages({
-                "-monitor option is NOT recommended when running with Valkyrie mode",
+                "-dxmainadapter option is NOT recommended when running with Valkyrie mode",
                 "    due to known compatibility issues with the game:",
                 "      * game may launch in wrong resolution or refresh rate",
                 "      * touch / mouse input may stop working in subscreen / overlay",
-                "    recommended fix is to NOT use -monitor and instead set the primary",
-                "    monitor in Windows settings before launching the game"
+                "    use Change Main Monitor (-mainmonitor) option instead"
                 });
         }
 #endif

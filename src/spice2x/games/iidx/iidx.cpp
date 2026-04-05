@@ -486,28 +486,28 @@ namespace games::iidx {
             log_fatal("iidx", "BAD MODEL NAME ERROR - TDJ specified, must be LDJ instead");
         }
 
-        // check -monitor + TDJ mode
+        // check -dxmainadapter + TDJ mode
         if (!GRAPHICS_WINDOWED && D3D9_ADAPTER.has_value() && TDJ_MODE) {
             IIDX_TDJ_MONITOR_WARNING = true;
             log_warning(
                 "iidx",
-                "\n\n!!! using -monitor option with TDJ is NOT recommended due to known  !!!\n"
-                "!!! compatibility issues with the game                              !!!\n"
+                "\n\n"
+                "!!! using -dxmainadapter option with TDJ is NOT recommended        !!!\n"
+                "!!! due to known compatibility issues with the game                 !!!\n"
                 "!!!                                                                 !!!\n"
                 "!!!   * game may launch in wrong resolution or refresh rate         !!!\n"
                 "!!!   * touch / mouse input may stop working in subscreen / overlay !!!\n"
                 "!!!                                                                 !!!\n"
-                "!!! recommendation is to NOT use -monitor and instead set the       !!!\n"
-                "!!! primary monitor in Windows settings before launching the game   !!!\n\n"
+                "!!! recommendation is to use the Change Main Monitor (-mainmonitor) !!!\n"
+                "!!! option instead of -dxmainadapter                                !!!\n\n"
                 );
 
             deferredlogs::defer_error_messages({
-                "-monitor option is NOT recommended when running with TDJ mode",
+                "-dxmainadapter option is NOT recommended when running with TDJ mode",
                 "    due to known compatibility issues with the game:",
                 "      * game may launch in wrong resolution or refresh rate",
                 "      * touch / mouse input may stop working in subscreen / overlay",
-                "    recommended fix is to NOT use -monitor and instead set the primary",
-                "    monitor in Windows settings before launching the game"
+                "    use Change Main Monitor (-mainmonitor) option instead"
                 });
         }
 

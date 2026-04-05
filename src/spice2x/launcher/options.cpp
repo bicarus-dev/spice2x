@@ -218,11 +218,11 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .picker = OptionPickerType::Monitor,
     },
     {
-        // DX9DisplayAdapter
-        .title = "DX9 Primary Display Adapter Override",
+        // DXDisplayAdapter
+        .title = "DX Primary Display Adapter Override",
         .name = "monitor",
-        .display_name = "dx9mainadapter",
-        .aliases = "dx9mainadapter",
+        .display_name = "dxmainadapter",
+        .aliases = "dxmainadapter",
         .desc = "Prefer to use Change Main Monitor option instead of this one.\n\n"
             "Sets the display that the game will be opened in, for multiple monitors.\n\n"
             "0 is the primary monitor, 1 is the second monitor, and so on.\n\n"
