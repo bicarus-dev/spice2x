@@ -473,6 +473,9 @@ int main_implementation(int argc, char *argv[]) {
     if (options[launcher::Options::spice2x_SDVXSubRedraw].value_bool()) {
         SUBSCREEN_FORCE_REDRAW = true;
     }
+    if (options[launcher::Options::SDVXSubMonitorOverride].is_active()) {
+        sysutils::SECOND_MONITOR_OVERRIDE = options[launcher::Options::SDVXSubMonitorOverride].value_text();
+    }
     if (options[launcher::Options::LoadIIDXModule].value_bool()) {
         attach_iidx = true;
     }
@@ -1126,6 +1129,9 @@ int main_implementation(int argc, char *argv[]) {
     if (options[launcher::Options::IIDXWindowedSubscreenAlwaysOnTop].value_bool() ||
         options[launcher::Options::SDVXWindowedSubscreenAlwaysOnTop].value_bool()) {
         GRAPHICS_WSUB_ALWAYS_ON_TOP = true;
+    }
+    if (options[launcher::Options::IIDXSubMonitorOverride].is_active()) {
+        sysutils::SECOND_MONITOR_OVERRIDE = options[launcher::Options::IIDXSubMonitorOverride].value_text();
     }
 
     if (options[launcher::Options::spice2x_JubeatLegacyTouch].value_bool()) {

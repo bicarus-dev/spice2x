@@ -30,6 +30,7 @@
 #include "util/memutils.h"
 #include "util/sigscan.h"
 #include "util/socd_cleaner.h"
+#include "util/sysutils.h"
 #include "util/time.h"
 #include "util/utils.h"
 #include "launcher/signal.h"
@@ -422,6 +423,14 @@ namespace games::iidx {
         if (!DISABLE_CAMS.value()) {
             init_legacy_camera_hook(FLIP_CAMS);
         }
+
+#if SPICE64
+
+        if (TDJ_MODE) {
+            sysutils::hook_EnumDisplayDevicesA();
+        }
+
+#endif
 
         // init cfgmgr32 hooks
         cfgmgr32hook_init(avs::game::DLL_INSTANCE);

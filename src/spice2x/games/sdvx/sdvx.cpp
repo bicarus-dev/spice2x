@@ -21,6 +21,7 @@
 #include "util/socd_cleaner.h"
 #include "util/time.h"
 #include "util/libutils.h"
+#include "util/sysutils.h"
 #include "misc/eamuse.h"
 #include "misc/nativetouchhook.h"
 #include "misc/wintouchemu.h"
@@ -354,7 +355,7 @@ namespace games::sdvx {
         if (!GRAPHICS_WINDOWED && D3D9_ADAPTER.has_value() && is_valkyrie_model()) {
             SHOW_VM_MONITOR_WARNING = true;
             log_warning(
-                "iidx",
+                "sdvx",
                 "\n\n"
                 "!!! using -dxmainadapter option with Valkyrie mode is NOT          !!!\n"
                 "!!! recommended due to known compatibility issues with the game     !!!\n"
@@ -391,7 +392,7 @@ namespace games::sdvx {
             }
         }
     }
-
+    
     void SDVXGame::attach() {
         Game::attach();
 
@@ -466,6 +467,7 @@ namespace games::sdvx {
                 ENABLE_COM_PORT_SCAN_HOOK = true;
             }
         }
+        
 #endif
 
         // ASIO device hook
@@ -501,6 +503,9 @@ namespace games::sdvx {
         // remove log spam
         logger::hook_add(sdvx64_spam_remover, nullptr);
 
+        if (is_valkyrie_model()) {
+            sysutils::hook_EnumDisplayDevicesA();
+        }
 #endif
     }
 

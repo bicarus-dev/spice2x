@@ -929,6 +929,17 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         },
     },
     {
+        // SDVXSubMonitorOverride
+        .title = "SDVX Subscreen Monitor Override",
+        .name = "sdvxsubmonitor",
+        .desc = "If you have three or more monitors, this option can be set to tell the game which monitor is the subscreen.",
+        .type = OptionType::Text,
+        .setting_name = "\\\\.\\DISPLAY3",
+        .game_name = "Sound Voltex",
+        .category = "Monitor",
+        .picker = OptionPickerType::Monitor,
+    },
+    {
         .title = "Force Load DDR Module",
         .name = "ddr",
         .desc = "Manually enable Dance Dance Revolution module.",
@@ -2342,6 +2353,17 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .type = OptionType::Bool,
         .game_name = "Beatmania IIDX",
         .category = "Game Options",
+    },
+    {
+        // IIDXSubMonitorOverride
+        .title = "IIDX TDJ Subscreen Monitor Override",
+        .name = "iidxsubmonitor",
+        .desc = "If you have three or more monitors, this option can be set to tell the game which monitor is the subscreen.",
+        .type = OptionType::Text,
+        .setting_name = "\\\\.\\DISPLAY3",
+        .game_name = "Beatmania IIDX",
+        .category = "Monitor",
+        .picker = OptionPickerType::Monitor,
     },
     {
         // spice2x_IIDXEmulateSubscreenKeypadTouch
