@@ -205,8 +205,7 @@ then
 			${BUILDDIR_WINXP_64}/spicetools/64/spice64.exe
 		windows_dll_compat_checker -s PREMADE/winxp_x86_64_32bit_dlls.ini \
 			${BUILDDIR_WINXP_32}/spicetools/spicecfg.exe \
-			${BUILDDIR_WINXP_32}/spicetools/32/spice.exe \
-			${BUILDDIR_WINXP_32}/spicetools/32/spice_laa.exe
+			${BUILDDIR_WINXP_32}/spicetools/32/spice.exe
 	fi
 fi
 
@@ -266,6 +265,10 @@ rm -rf ${OUTDIR_EXTRAS}
 mkdir -p ${OUTDIR_EXTRAS}
 mkdir -p ${OUTDIR_EXTRAS}/largeaddressaware
 mkdir -p ${OUTDIR_EXTRAS}/linux
+if ((BUILD_XP > 0))
+then
+mkdir -p ${OUTDIR_EXTRAS}/winxp
+fi
 
 if false # ((DEBUG > 0))
 then
