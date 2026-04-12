@@ -661,7 +661,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::GetDeviceCaps(UINT Adapter, D3DDEVT
         }
         // in windowed mode, LDJ will always launch two windows, no special handling needed here
     } else if (avs::game::is_model("KFC")) {
-        if (GRAPHICS_WINDOWED & GRAPHICS_PREVENT_SECONDARY_WINDOW) {
+        if (GRAPHICS_WINDOWED && GRAPHICS_PREVENT_SECONDARY_WINDOW) {
             // user wants windowed mode but does not want subscreen at all
             pCaps->NumberOfAdaptersInGroup = 1;
         } else {
@@ -1206,7 +1206,10 @@ static void graphics_d3d9_ldj_on_present(IDirect3DDevice9 *wrapped_device) {
     if (SUB_SWAP_CHAIN != nullptr) {
         wintouchemu::update();
 
-        if (GRAPHICS_WINDOWED || SUBSCREEN_FORCE_REDRAW) {
+        // newer versions of exceed gear needs SUBSCREEN_FORCE_REDRAW
+        // (when enabled on older versions of EG, you end up with graphical glitches on the subscreen
+        // early versions of popn HC needs this as well, otherwise the subscreen doesn't update at all
+        if (GRAPHICS_WINDOWED || SUBSCREEN_FORCE_REDRAW || games::popn::is_pikapika_model()) {
             SUB_SWAP_CHAIN->Present(nullptr, nullptr, nullptr, nullptr, 0);
         }
     }
