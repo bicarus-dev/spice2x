@@ -560,3 +560,56 @@ bool graphics_window_resize_breaks_game() {
 
     return result;
 }
+
+void graphics_window_check_bounds_before_creation(int &x, int &y, const int width, const int height) {
+    RECT rect = {
+        .left = x,
+        .top = y,
+        .right = x + width,
+        .bottom = y + height
+    };
+
+    HMONITOR mon = MonitorFromRect(&rect, MONITOR_DEFAULTTONULL);
+    if (mon != nullptr) {
+        return;
+    }
+
+    log_warning(
+        "graphics-windowed",
+        "window is completely out of bounds, resetting position: ({}, {}) => (0, 0)",
+        x, y);
+    x = 0;
+    y = 0;
+    rect = {
+        .left = x,
+        .top = y,
+        .right = x + width,
+        .bottom = y + height
+    };
+
+    mon = MonitorFromRect(&rect, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi = {};
+    mi.cbSize = sizeof(mi);
+    if (!GetMonitorInfo(mon, &mi)) {
+        log_warning(
+            "graphics-windowed",
+            "failed to get monitor info for out of bounds window");
+        return;
+    }
+
+    log_misc(
+        "graphics-windowed",
+        "nearest monitor for this window has work area ({}, {}),({}, {})",
+        mi.rcWork.left, mi.rcWork.top, mi.rcWork.right, mi.rcWork.bottom);
+
+    RECT bounds = mi.rcWork;
+    const bool fully_visible =
+        (rect.left   >= bounds.left &&
+         rect.top    >= bounds.top &&
+         rect.right  <= bounds.right &&
+         rect.bottom <= bounds.bottom);
+
+    if (!fully_visible) {
+        log_warning("graphics-windowed", "window will not be fully visible on monitor");
+    }
+}
