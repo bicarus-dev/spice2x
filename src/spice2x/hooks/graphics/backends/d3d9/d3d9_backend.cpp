@@ -463,7 +463,8 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::RegisterSoftwareDevice(void *pIniti
 }
 
 UINT STDMETHODCALLTYPE WrappedIDirect3D9::GetAdapterCount() {
-    return pReal->GetAdapterCount();
+    log_misc("graphics::d3d9", "GetAdapterCount called. real ={}, returning 2 instead", pReal->GetAdapterCount());
+    return 2;
 }
 
 HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::GetAdapterIdentifier(
@@ -471,9 +472,27 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::GetAdapterIdentifier(
         DWORD Flags,
         D3DADAPTER_IDENTIFIER9 *pIdentifier)
 {
-    log_misc("graphics::d3d9", "IDirect3D9::GetAdapterIdentifier hook hit for adapter {}, flags {:#x}",
-            Adapter, Flags);
-    CHECK_RESULT(pReal->GetAdapterIdentifier(Adapter, Flags, pIdentifier));
+
+    if (Adapter == 1) {
+        log_misc("graphics::d3d9", "GetAdapterIdentifier called for adapter 1");
+        if (pIdentifier) {
+            memset(pIdentifier, 0, sizeof(*pIdentifier));
+            memcpy(pIdentifier->DeviceName, L"\\\\.\\DISPLAY_SPICE_FAKE", sizeof(L"\\\\.\\DISPLAY_SPICE_FAKE"));
+            pIdentifier->VendorId = 0x1234;
+            pIdentifier->DeviceId = 0x5678;
+            pIdentifier->SubSysId = 0x9abc;
+            pIdentifier->Revision = 0xdef0;
+        }
+
+        return S_OK;
+    }
+    
+    const HRESULT ret = pReal->GetAdapterIdentifier(Adapter, Flags, pIdentifier);
+    
+    log_misc("graphics::d3d9", "IDirect3D9::GetAdapterIdentifier returned {} for adapter {}, flags {:#x}, name={}",
+            FMT_HRESULT(ret), Adapter, Flags, pIdentifier ? pIdentifier->DeviceName : "null");
+
+    return ret;
 }
 
 UINT STDMETHODCALLTYPE WrappedIDirect3D9::GetAdapterModeCount(UINT Adapter, D3DFORMAT Format) {

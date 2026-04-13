@@ -308,14 +308,13 @@ namespace games::popn {
                 "popn",
                 "GetMonitorInfoA hook hit for fake monitor, returning fake info");
 
-            lpmi->cbSize = sizeof(MONITORINFO);
             lpmi->rcMonitor.left = FAKE_MONITOR_OFFSET_X_Y;
             lpmi->rcMonitor.top = FAKE_MONITOR_OFFSET_X_Y;
             lpmi->rcMonitor.right = FAKE_MONITOR_OFFSET_X_Y + FAKE_MONITOR_WIDTH;
             lpmi->rcMonitor.bottom = FAKE_MONITOR_OFFSET_X_Y + FAKE_MONITOR_HEIGHT;
             lpmi->rcWork = lpmi->rcMonitor;
             lpmi->dwFlags = 0; // not primary
-            return TRUE;
+            return true;
         }
 
         // call original
