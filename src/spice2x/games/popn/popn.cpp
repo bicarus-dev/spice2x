@@ -35,8 +35,6 @@ namespace games::popn {
     static decltype(GetDisplayConfigBufferSizes) *GetDisplayConfigBufferSizes_orig = nullptr;
     static decltype(QueryDisplayConfig) *QueryDisplayConfig_orig = nullptr;
     static decltype(DisplayConfigGetDeviceInfo) *DisplayConfigGetDeviceInfo_orig = nullptr;
-    static decltype(EnumDisplayMonitors) *EnumDisplayMonitors_orig = nullptr;
-    static decltype(GetMonitorInfoA) *GetMonitorInfoA_orig = nullptr;
 
     static UINT32 pNumPathArrayElements_original = 0;
     static UINT32 pNumModeInfoArrayElements_original = 0;
@@ -49,17 +47,14 @@ namespace games::popn {
         UINT32 *pNumPathArrayElements,
         UINT32 *pNumModeInfoArrayElements)
     {
-        log_misc("popn", "GetDisplayConfigBufferSizes hook hit");
-
-        // call original
         const auto ret = GetDisplayConfigBufferSizes_orig(Flags, pNumPathArrayElements, pNumModeInfoArrayElements);
-
-        pNumPathArrayElements_original = *pNumPathArrayElements;
-        pNumModeInfoArrayElements_original = *pNumModeInfoArrayElements;
-
-        *pNumPathArrayElements += 1;
-        *pNumModeInfoArrayElements += 2;
-
+        if (FAKE_SUBSCREEN_ADAPTER) {
+            log_misc("popn", "GetDisplayConfigBufferSizes returning fake monitor paths and modes");
+            pNumPathArrayElements_original = *pNumPathArrayElements;
+            pNumModeInfoArrayElements_original = *pNumModeInfoArrayElements;
+            *pNumPathArrayElements += 1;
+            *pNumModeInfoArrayElements += 2;
+        }
         return ret;
     }
 
@@ -75,12 +70,15 @@ namespace games::popn {
         DISPLAYCONFIG_TOPOLOGY_ID* currentTopologyId)
     {
 
-        log_misc(
-            "popn",
-            "QueryDisplayConfig hook hit, paths={}, modes={}",
-            *numPathArrayElements, *numModeInfoArrayElements);
+        if (!FAKE_SUBSCREEN_ADAPTER) {
+            return QueryDisplayConfig_orig(
+                flags,
+                numPathArrayElements, pathArray,
+                numModeInfoArrayElements, modeInfoArray,
+                currentTopologyId);
+        }
 
-        // call original
+        // call original to fill in real monitor info
         UINT32 num_paths = pNumPathArrayElements_original;
         UINT32 num_modes = pNumModeInfoArrayElements_original;
         const auto ret = QueryDisplayConfig_orig(
@@ -90,11 +88,13 @@ namespace games::popn {
             currentTopologyId);
 
         if (ret != ERROR_SUCCESS) {
-            log_warning("popn", "QueryDisplayConfig_orig failed with error code {}", ret);
+            log_warning("popn", "QueryDisplayConfig failed with error code {}", ret);
             return ret;
         }
 
-        // fake path
+        log_misc("popn", "QueryDisplayConfig returning fake monitor paths and modes");
+
+        // insert a fake path
         DISPLAYCONFIG_PATH_INFO *path = &pathArray[pNumPathArrayElements_original];
         *path = {};
         path->flags = DISPLAYCONFIG_PATH_ACTIVE;
@@ -118,8 +118,7 @@ namespace games::popn {
         path->targetInfo.targetAvailable = true;
         path->targetInfo.statusFlags = DISPLAYCONFIG_TARGET_IN_USE;
 
-        // fake mode source
-        log_misc("popn", "add source info at index: {}", pNumModeInfoArrayElements_original);
+        // insert fake mode source
         DISPLAYCONFIG_MODE_INFO *mode_source = &modeInfoArray[pNumModeInfoArrayElements_original];
         *mode_source = {};
         mode_source->infoType = DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE;
@@ -132,16 +131,13 @@ namespace games::popn {
         mode_source->sourceMode.position.x = FAKE_MONITOR_OFFSET_X_Y;
         mode_source->sourceMode.position.y = FAKE_MONITOR_OFFSET_X_Y;
 
-        // fake mode target
-        log_misc("popn", "add target info at index: {}", pNumModeInfoArrayElements_original+1);
+        // insert fake mode target
         DISPLAYCONFIG_MODE_INFO *mode_target = &modeInfoArray[pNumModeInfoArrayElements_original+1];
         *mode_target = {};
         mode_target->infoType = DISPLAYCONFIG_MODE_INFO_TYPE_TARGET;
         mode_target->id = -2;
         mode_target->adapterId.HighPart = -1;
         mode_target->adapterId.LowPart = -1;
-        // don't think the game looks at the rest
-
         return ret;
     }
 
@@ -155,7 +151,9 @@ namespace games::popn {
         }
 
         // fake monitor
-        if ((requestPacket->id == static_cast<UINT32>(-1) || requestPacket->id == static_cast<UINT32>(-2)) &&
+        if (FAKE_SUBSCREEN_ADAPTER &&
+            (requestPacket->id == static_cast<UINT32>(-1) ||
+             requestPacket->id == static_cast<UINT32>(-2)) &&
             requestPacket->adapterId.HighPart == static_cast<LONG>(-1) &&
             requestPacket->adapterId.LowPart == static_cast<DWORD>(-1)) {
             log_misc(
@@ -172,14 +170,17 @@ namespace games::popn {
                 target->flags.value = 0;
                 target->outputTechnology = DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HDMI;
                 target->connectorInstance = 0;
-                memcpy(target->monitorFriendlyDeviceName, L"Spice Fake Monitor", sizeof(L"Spice Fake Monitor"));
-                memcpy(target->monitorDevicePath, L"\\\\?\\SpiceFakeMonitor", sizeof(L"\\\\?\\SpiceFakeMonitor"));
-
+                wcscpy(target->monitorFriendlyDeviceName, L"Spice Fake Monitor");
+                wcscpy(target->monitorDevicePath, L"\\\\?\\SpiceFakeMonitor");
             } else if (requestPacket->type == DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME) {
                 const auto source = reinterpret_cast<DISPLAYCONFIG_SOURCE_DEVICE_NAME*>(requestPacket);
-                memcpy(source->viewGdiDeviceName, L"\\\\.\\DISPLAY_SPICE_FAKE", sizeof(L"\\\\.\\DISPLAY_SPICE_FAKE"));
+                // value must match WrappedIDirect3D9::GetAdapterIdentifier
+                wcscpy(source->viewGdiDeviceName, L"\\\\.\\DISPLAY_SPICE_FAKE");
             } else {
-                log_fatal("popn", "unexpected device info type {} for fake monitor", static_cast<int>(requestPacket->type));
+                log_fatal(
+                    "popn",
+                    "unexpected device info type {} for fake monitor",
+                    static_cast<int>(requestPacket->type));
             }
 
             return ERROR_SUCCESS;
@@ -238,108 +239,6 @@ namespace games::popn {
             }
         }
         return ret;
-    }
-
-
-    static
-    BOOL
-    WINAPI
-    EnumDisplayMonitors_hook (
-        HDC hdc,
-        LPCRECT lprcClip,
-        MONITORENUMPROC lpfnEnum,
-        LPARAM dwData
-    ) {
-        if (!EnumDisplayMonitors_orig) {
-            return false;
-        }
-
-        struct MonitorEnum {
-            HMONITOR monitor;
-            HDC hdc;
-            RECT rect;
-        };
-        std::vector<MonitorEnum> monitors;
-        auto callback = [](HMONITOR monitor, HDC hdc, LPRECT rect, LPARAM data) -> BOOL {
-            std::vector<MonitorEnum> *monitors = reinterpret_cast<std::vector<MonitorEnum> *>(data);
-            const RECT rect_new = {rect->left, rect->top, rect->right, rect->bottom};
-            monitors->emplace_back(monitor, hdc, rect_new);
-            return true; // continue enumeration
-        };
-
-        // call the original to get actual monitors; callback will be called synchronously
-        const auto result =
-            EnumDisplayMonitors_orig(hdc, lprcClip, callback, reinterpret_cast<LPARAM>(&monitors));
-        if (!result) {
-            return result;
-        }
-
-        // call into the actual callback provided by the caller
-        int count = 0;
-        for (auto &monitor : monitors) {
-            log_info(
-                "iidx",
-                "EnumDisplayMonitors callback: monitor={:#x}, hdc={:#x}, rect=({}, {}, {}, {})",
-                reinterpret_cast<uint64_t>(monitor.monitor),
-                reinterpret_cast<uint64_t>(monitor.hdc),
-                monitor.rect.left, monitor.rect.top, monitor.rect.right, monitor.rect.bottom);
-
-            count += 1;
-            const auto cont = lpfnEnum(monitor.monitor, monitor.hdc, &monitor.rect, dwData);
-            if (!cont) {
-                log_warning(
-                    "iidx",
-                    "EnumDisplayMonitors callback requested to stop enumeration after {} monitors",
-                    count);
-                return true;
-            }
-        }
-
-        log_info(
-            "popn",
-            "EnumDisplayMonitors hook: enumerated {} monitor(s), now adding fake monitor...",
-            count);
-
-        // call it one more time with the fake monitor
-        RECT rect = {
-            .left = FAKE_MONITOR_OFFSET_X_Y,
-            .top = FAKE_MONITOR_OFFSET_X_Y,
-            .right = FAKE_MONITOR_OFFSET_X_Y + FAKE_MONITOR_WIDTH,
-            .bottom = FAKE_MONITOR_OFFSET_X_Y + FAKE_MONITOR_HEIGHT
-        };
-        lpfnEnum(FAKE_MONITOR_HMONITOR, nullptr, &rect, dwData);
-
-        return true;
-    }
-
-    BOOL
-    WINAPI
-    GetMonitorInfoA_hook(
-        HMONITOR hMonitor,
-        LPMONITORINFO lpmi) {
-
-        log_misc(
-            "popn",
-            "GetMonitorInfoA hook hit, monitor={:#x}",
-            reinterpret_cast<uint64_t>(hMonitor));
-
-        // fake monitor
-        if (hMonitor == FAKE_MONITOR_HMONITOR) {
-            log_misc(
-                "popn",
-                "GetMonitorInfoA hook hit for fake monitor, returning fake info");
-
-            lpmi->rcMonitor.left = FAKE_MONITOR_OFFSET_X_Y;
-            lpmi->rcMonitor.top = FAKE_MONITOR_OFFSET_X_Y;
-            lpmi->rcMonitor.right = FAKE_MONITOR_OFFSET_X_Y + FAKE_MONITOR_WIDTH;
-            lpmi->rcMonitor.bottom = FAKE_MONITOR_OFFSET_X_Y + FAKE_MONITOR_HEIGHT;
-            lpmi->rcWork = lpmi->rcMonitor;
-            lpmi->dwFlags = 0; // not primary
-            return true;
-        }
-
-        // call original
-        return GetMonitorInfoA_orig(hMonitor, lpmi);
     }
 
 #endif
@@ -695,12 +594,6 @@ namespace games::popn {
         DisplayConfigGetDeviceInfo_orig =
             detour::iat_try("DisplayConfigGetDeviceInfo",
                 DisplayConfigGetDeviceInfo_hook, avs::game::DLL_INSTANCE);
-        EnumDisplayMonitors_orig =
-            detour::iat_try("EnumDisplayMonitors",
-                EnumDisplayMonitors_hook, avs::game::DLL_INSTANCE);
-        GetMonitorInfoA_orig =
-            detour::iat_try("GetMonitorInfoA",
-                GetMonitorInfoA_hook, avs::game::DLL_INSTANCE);
 
         // GUID_DEVCLASS_USB = {86E0D1E0-11D0-89B0-00A0C9054129}
         SETUPAPI_SETTINGS settings{};
