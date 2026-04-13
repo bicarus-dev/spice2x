@@ -734,9 +734,12 @@ namespace games::popn {
         //       00000080 0000000A 00000001  (button 8)
         //       00000100 0000000B 00000001  (button 9)
         //       set third column to 0 and it will work with BIO2
-
-        wintouchemu::FORCE = true;
-        wintouchemu::INJECT_MOUSE_AS_WM_TOUCH = true;
+        
+        if (!GRAPHICS_WINDOWED) {
+            wintouchemu::FORCE = true;
+            wintouchemu::INJECT_MOUSE_AS_WM_TOUCH = true;
+            wintouchemu::hook_title_ends("", "Main Screen", avs::game::DLL_INSTANCE);
+        }
 
 #endif
 
