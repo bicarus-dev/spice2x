@@ -559,7 +559,7 @@ namespace sysutils {
             // if there is one preferred by the user, use this one, and hide others
             log_info(
                 "sysutils",
-                "returning second monitor, {} @ index {} (-sysutilssubmonitor)",
+                "returning second monitor, {} @ index {} (-iidxsubmonitor / -sdvxsubmonitor)",
                 lpDisplayDevice->DeviceName,
                 iDevNum);
             return result_orig;

@@ -463,7 +463,20 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::RegisterSoftwareDevice(void *pIniti
 }
 
 UINT STDMETHODCALLTYPE WrappedIDirect3D9::GetAdapterCount() {
-    return pReal->GetAdapterCount();
+    UINT result = pReal->GetAdapterCount();
+
+    if (!FAKE_SUBSCREEN_ADAPTER && games::popn::is_pikapika_model() && result == 1) {
+        FAKE_SUBSCREEN_ADAPTER = true;
+        log_info(
+            "graphics::d3d9",
+            "GetAdapterCount returned 1, popn needs 2 adapters - enabliing fake submonitor mode");
+    }
+
+    if (FAKE_SUBSCREEN_ADAPTER) {
+        return 2;
+    }
+    
+    return result;
 }
 
 HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::GetAdapterIdentifier(
@@ -471,10 +484,26 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::GetAdapterIdentifier(
         DWORD Flags,
         D3DADAPTER_IDENTIFIER9 *pIdentifier)
 {
+
+    if (FAKE_SUBSCREEN_ADAPTER && Adapter == 1 && pIdentifier) {
+        *pIdentifier = {};
+        strcpy(pIdentifier->DeviceName, "\\\\.\\DISPLAY_SPICE_FAKE"); 
+        log_misc(
+            "graphics::d3d9",
+            "GetAdapterIdentifier called for fake subscreen adapter 1: {}",
+            pIdentifier->DeviceName);
+        return S_OK;
+    }
+    
     CHECK_RESULT(pReal->GetAdapterIdentifier(Adapter, Flags, pIdentifier));
 }
 
 UINT STDMETHODCALLTYPE WrappedIDirect3D9::GetAdapterModeCount(UINT Adapter, D3DFORMAT Format) {
+    if (FAKE_SUBSCREEN_ADAPTER && Adapter == 1) {
+        log_misc("graphics::d3d9", "GetAdapterModeCount called for fake subscreen adapter");
+        return 1;
+    }
+
     return pReal->GetAdapterModeCount(Adapter, Format);
 }
 
@@ -484,6 +513,19 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::EnumAdapterModes(
         UINT Mode,
         D3DDISPLAYMODE *pMode)
 {
+    if (FAKE_SUBSCREEN_ADAPTER && Adapter == 1) {
+        log_misc("graphics::d3d9", "EnumAdapterModes called for fake subscreen adapter");
+        if (Mode == 0 && pMode) {
+            pMode->Width = 1280;
+            pMode->Height = 800;
+            pMode->RefreshRate = 60;
+            pMode->Format = D3DFMT_X8R8G8B8;
+            return S_OK;
+        } else {
+            return D3DERR_INVALIDCALL;
+        }
+    }
+
     HRESULT ret = pReal->EnumAdapterModes(Adapter, Format, Mode, pMode);
 
     if (SUCCEEDED(ret) && pMode) {
@@ -580,6 +622,11 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::CheckDeviceFormat(
         D3DRESOURCETYPE RType,
         D3DFORMAT CheckFormat)
 {
+    if (FAKE_SUBSCREEN_ADAPTER && Adapter == 1) {
+        log_misc("graphics::d3d9", "CheckDeviceFormat called for fake subscreen adapter");
+        return D3D_OK;
+    }
+
     CHECK_RESULT(pReal->CheckDeviceFormat(Adapter, DeviceType, AdapterFormat, Usage, RType, CheckFormat));
 }
 
@@ -677,9 +724,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::GetDeviceCaps(UINT Adapter, D3DDEVT
             pCaps->NumberOfAdaptersInGroup = 1;
         }
     } else if (games::popn::is_pikapika_model()) {
-        if (GRAPHICS_WINDOWED) {
-            pCaps->NumberOfAdaptersInGroup = 2;
-        }
+        pCaps->NumberOfAdaptersInGroup = 2;
     }
 
     return ret;

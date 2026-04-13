@@ -67,6 +67,7 @@ extern HWND POPN_SUBSCREEN_WINDOW;
 extern HWND GFDM_SUBSCREEN_WINDOW;
 
 extern bool SUBSCREEN_FORCE_REDRAW;
+extern bool FAKE_SUBSCREEN_ADAPTER;
 
 // settings
 extern std::string GRAPHICS_DEVICEID;

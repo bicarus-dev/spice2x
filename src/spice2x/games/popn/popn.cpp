@@ -26,8 +26,120 @@ namespace games::popn {
     bool SHOW_PIKA_MONITOR_WARNING = false;
     
 #if SPICE64 && !SPICE_XP
-    
+
+    const HMONITOR FAKE_MONITOR_HMONITOR = (HMONITOR)-1;
+    constexpr LONG FAKE_MONITOR_OFFSET_X_Y = -999999;
+    constexpr LONG FAKE_MONITOR_WIDTH = 1280;
+    constexpr LONG FAKE_MONITOR_HEIGHT = 800;
+
+    static decltype(GetDisplayConfigBufferSizes) *GetDisplayConfigBufferSizes_orig = nullptr;
+    static decltype(QueryDisplayConfig) *QueryDisplayConfig_orig = nullptr;
     static decltype(DisplayConfigGetDeviceInfo) *DisplayConfigGetDeviceInfo_orig = nullptr;
+
+    static UINT32 pNumPathArrayElements_original = 0;
+    static UINT32 pNumModeInfoArrayElements_original = 0;
+
+    static
+    LONG
+    WINAPI
+    GetDisplayConfigBufferSizes_hook(
+        UINT32 Flags,
+        UINT32 *pNumPathArrayElements,
+        UINT32 *pNumModeInfoArrayElements)
+    {
+        const auto ret = GetDisplayConfigBufferSizes_orig(Flags, pNumPathArrayElements, pNumModeInfoArrayElements);
+        if (FAKE_SUBSCREEN_ADAPTER) {
+            log_misc("popn", "GetDisplayConfigBufferSizes returning fake monitor paths and modes");
+            pNumPathArrayElements_original = *pNumPathArrayElements;
+            pNumModeInfoArrayElements_original = *pNumModeInfoArrayElements;
+            *pNumPathArrayElements += 1;
+            *pNumModeInfoArrayElements += 2;
+        }
+        return ret;
+    }
+
+    static
+    LONG
+    WINAPI
+    QueryDisplayConfig_hook(
+        UINT32 flags,
+        UINT32* numPathArrayElements,
+        DISPLAYCONFIG_PATH_INFO* pathArray,
+        UINT32* numModeInfoArrayElements,
+        DISPLAYCONFIG_MODE_INFO* modeInfoArray,
+        DISPLAYCONFIG_TOPOLOGY_ID* currentTopologyId)
+    {
+
+        if (!FAKE_SUBSCREEN_ADAPTER) {
+            return QueryDisplayConfig_orig(
+                flags,
+                numPathArrayElements, pathArray,
+                numModeInfoArrayElements, modeInfoArray,
+                currentTopologyId);
+        }
+
+        // call original to fill in real monitor info
+        UINT32 num_paths = pNumPathArrayElements_original;
+        UINT32 num_modes = pNumModeInfoArrayElements_original;
+        const auto ret = QueryDisplayConfig_orig(
+            flags,
+            &num_paths, pathArray,
+            &num_modes, modeInfoArray,
+            currentTopologyId);
+
+        if (ret != ERROR_SUCCESS) {
+            log_warning("popn", "QueryDisplayConfig failed with error code {}", ret);
+            return ret;
+        }
+
+        log_misc("popn", "QueryDisplayConfig returning fake monitor paths and modes");
+
+        // insert a fake path
+        DISPLAYCONFIG_PATH_INFO *path = &pathArray[pNumPathArrayElements_original];
+        *path = {};
+        path->flags = DISPLAYCONFIG_PATH_ACTIVE;
+
+        path->sourceInfo.adapterId.HighPart = -1;
+        path->sourceInfo.adapterId.LowPart = -1;
+        path->sourceInfo.id = -1;
+        path->sourceInfo.modeInfoIdx = pNumModeInfoArrayElements_original;
+        path->sourceInfo.statusFlags = DISPLAYCONFIG_SOURCE_IN_USE;
+
+        path->targetInfo.adapterId.HighPart = -1;
+        path->targetInfo.adapterId.LowPart = -1;
+        path->targetInfo.id = -2;
+        path->targetInfo.modeInfoIdx = pNumModeInfoArrayElements_original + 1;
+        path->targetInfo.outputTechnology = DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HDMI;
+        path->targetInfo.rotation = DISPLAYCONFIG_ROTATION_IDENTITY;
+        path->targetInfo.scaling = DISPLAYCONFIG_SCALING_IDENTITY;
+        path->targetInfo.refreshRate.Numerator = 60000;
+        path->targetInfo.refreshRate.Denominator = 1000;
+        path->targetInfo.scanLineOrdering = DISPLAYCONFIG_SCANLINE_ORDERING_PROGRESSIVE;
+        path->targetInfo.targetAvailable = true;
+        path->targetInfo.statusFlags = DISPLAYCONFIG_TARGET_IN_USE;
+
+        // insert fake mode source
+        DISPLAYCONFIG_MODE_INFO *mode_source = &modeInfoArray[pNumModeInfoArrayElements_original];
+        *mode_source = {};
+        mode_source->infoType = DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE;
+        mode_source->id = -1;
+        mode_source->adapterId.HighPart = -1;
+        mode_source->adapterId.LowPart = -1;
+        mode_source->sourceMode.width = FAKE_MONITOR_WIDTH;
+        mode_source->sourceMode.height = FAKE_MONITOR_HEIGHT;
+        mode_source->sourceMode.pixelFormat = DISPLAYCONFIG_PIXELFORMAT_32BPP;
+        mode_source->sourceMode.position.x = FAKE_MONITOR_OFFSET_X_Y;
+        mode_source->sourceMode.position.y = FAKE_MONITOR_OFFSET_X_Y;
+
+        // insert fake mode target
+        DISPLAYCONFIG_MODE_INFO *mode_target = &modeInfoArray[pNumModeInfoArrayElements_original+1];
+        *mode_target = {};
+        mode_target->infoType = DISPLAYCONFIG_MODE_INFO_TYPE_TARGET;
+        mode_target->id = -2;
+        mode_target->adapterId.HighPart = -1;
+        mode_target->adapterId.LowPart = -1;
+        return ret;
+    }
 
     static
     LONG
@@ -37,6 +149,43 @@ namespace games::popn {
         if (requestPacket == nullptr) {
             return DisplayConfigGetDeviceInfo_orig(requestPacket);
         }
+
+        // fake monitor
+        if (FAKE_SUBSCREEN_ADAPTER &&
+            (requestPacket->id == static_cast<UINT32>(-1) ||
+             requestPacket->id == static_cast<UINT32>(-2)) &&
+            requestPacket->adapterId.HighPart == static_cast<LONG>(-1) &&
+            requestPacket->adapterId.LowPart == static_cast<DWORD>(-1)) {
+            log_misc(
+                "popn",
+                "DisplayConfigGetDeviceInfo hook hit for fake monitor, type={}, size={}, id={}, luid={}/{}",
+                static_cast<int>(requestPacket->type),
+                requestPacket->size,
+                requestPacket->id,
+                requestPacket->adapterId.HighPart,
+                requestPacket->adapterId.LowPart);
+
+            if (requestPacket->type == DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME) {
+                const auto target = reinterpret_cast<DISPLAYCONFIG_TARGET_DEVICE_NAME*>(requestPacket);
+                target->flags.value = 0;
+                target->outputTechnology = DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HDMI;
+                target->connectorInstance = 0;
+                wcscpy(target->monitorFriendlyDeviceName, L"Spice Fake Monitor");
+                wcscpy(target->monitorDevicePath, L"\\\\?\\SpiceFakeMonitor");
+            } else if (requestPacket->type == DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME) {
+                const auto source = reinterpret_cast<DISPLAYCONFIG_SOURCE_DEVICE_NAME*>(requestPacket);
+                // value must match WrappedIDirect3D9::GetAdapterIdentifier
+                wcscpy(source->viewGdiDeviceName, L"\\\\.\\DISPLAY_SPICE_FAKE");
+            } else {
+                log_fatal(
+                    "popn",
+                    "unexpected device info type {} for fake monitor",
+                    static_cast<int>(requestPacket->type));
+            }
+
+            return ERROR_SUCCESS;
+        }
+
         const auto ret = DisplayConfigGetDeviceInfo_orig(requestPacket);
         log_misc(
             "popn",
@@ -436,6 +585,12 @@ namespace games::popn {
         }
 
         // monitor hook
+        GetDisplayConfigBufferSizes_orig =
+            detour::iat_try("GetDisplayConfigBufferSizes",
+                GetDisplayConfigBufferSizes_hook, avs::game::DLL_INSTANCE);
+        QueryDisplayConfig_orig =
+            detour::iat_try("QueryDisplayConfig",
+                QueryDisplayConfig_hook, avs::game::DLL_INSTANCE);
         DisplayConfigGetDeviceInfo_orig =
             detour::iat_try("DisplayConfigGetDeviceInfo",
                 DisplayConfigGetDeviceInfo_hook, avs::game::DLL_INSTANCE);
@@ -472,10 +627,12 @@ namespace games::popn {
         //       00000080 0000000A 00000001  (button 8)
         //       00000100 0000000B 00000001  (button 9)
         //       set third column to 0 and it will work with BIO2
-
-        wintouchemu::FORCE = true;
-        wintouchemu::INJECT_MOUSE_AS_WM_TOUCH = true;
-        wintouchemu::hook_title_ends("", "Main Screen", avs::game::DLL_INSTANCE);
+        
+        if (!GRAPHICS_WINDOWED) {
+            wintouchemu::FORCE = true;
+            wintouchemu::INJECT_MOUSE_AS_WM_TOUCH = true;
+            wintouchemu::hook_title_ends("", "Main Screen", avs::game::DLL_INSTANCE);
+        }
 
 #endif
 
