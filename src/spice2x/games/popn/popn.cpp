@@ -27,13 +27,19 @@ namespace games::popn {
     
 #if SPICE64 && !SPICE_XP
 
+    const HMONITOR FAKE_MONITOR_HMONITOR = (HMONITOR)-1;
+    constexpr LONG FAKE_MONITOR_OFFSET_X_Y = -999999;
+    constexpr LONG FAKE_MONITOR_WIDTH = 1280;
+    constexpr LONG FAKE_MONITOR_HEIGHT = 800;
+
     static decltype(GetDisplayConfigBufferSizes) *GetDisplayConfigBufferSizes_orig = nullptr;
     static decltype(QueryDisplayConfig) *QueryDisplayConfig_orig = nullptr;
     static decltype(DisplayConfigGetDeviceInfo) *DisplayConfigGetDeviceInfo_orig = nullptr;
+    static decltype(EnumDisplayMonitors) *EnumDisplayMonitors_orig = nullptr;
+    static decltype(GetMonitorInfoA) *GetMonitorInfoA_orig = nullptr;
 
-
-    UINT32 pNumPathArrayElements_original = 0;
-    UINT32 pNumModeInfoArrayElements_original = 0;
+    static UINT32 pNumPathArrayElements_original = 0;
+    static UINT32 pNumModeInfoArrayElements_original = 0;
 
     static
     LONG
@@ -111,11 +117,11 @@ namespace games::popn {
         mode2->id = -1;
         mode2->adapterId.HighPart = -1;
         mode2->adapterId.LowPart = -1;
-        mode2->sourceMode.width = 1280;
-        mode2->sourceMode.height = 800;
+        mode2->sourceMode.width = FAKE_MONITOR_WIDTH;
+        mode2->sourceMode.height = FAKE_MONITOR_HEIGHT;
         mode2->sourceMode.pixelFormat = DISPLAYCONFIG_PIXELFORMAT_32BPP;
-        mode2->sourceMode.position.x = -99999;
-        mode2->sourceMode.position.y = -99999;
+        mode2->sourceMode.position.x = FAKE_MONITOR_OFFSET_X_Y;
+        mode2->sourceMode.position.y = FAKE_MONITOR_OFFSET_X_Y;
 
         return ret;
     }
@@ -211,6 +217,109 @@ namespace games::popn {
             }
         }
         return ret;
+    }
+
+
+    static
+    BOOL
+    WINAPI
+    EnumDisplayMonitors_hook (
+        HDC hdc,
+        LPCRECT lprcClip,
+        MONITORENUMPROC lpfnEnum,
+        LPARAM dwData
+    ) {
+        if (!EnumDisplayMonitors_orig) {
+            return false;
+        }
+
+        struct MonitorEnum {
+            HMONITOR monitor;
+            HDC hdc;
+            RECT rect;
+        };
+        std::vector<MonitorEnum> monitors;
+        auto callback = [](HMONITOR monitor, HDC hdc, LPRECT rect, LPARAM data) -> BOOL {
+            std::vector<MonitorEnum> *monitors = reinterpret_cast<std::vector<MonitorEnum> *>(data);
+            const RECT rect_new = {rect->left, rect->top, rect->right, rect->bottom};
+            monitors->emplace_back(monitor, hdc, rect_new);
+            return true; // continue enumeration
+        };
+
+        // call the original to get actual monitors; callback will be called synchronously
+        const auto result =
+            EnumDisplayMonitors_orig(hdc, lprcClip, callback, reinterpret_cast<LPARAM>(&monitors));
+        if (!result) {
+            return result;
+        }
+
+        // call into the actual callback provided by the caller
+        int count = 0;
+        for (auto &monitor : monitors) {
+            log_info(
+                "iidx",
+                "EnumDisplayMonitors callback: monitor={:#x}, hdc={:#x}, rect=({}, {}, {}, {})",
+                reinterpret_cast<uint64_t>(monitor.monitor),
+                reinterpret_cast<uint64_t>(monitor.hdc),
+                monitor.rect.left, monitor.rect.top, monitor.rect.right, monitor.rect.bottom);
+
+            count += 1;
+            const auto cont = lpfnEnum(monitor.monitor, monitor.hdc, &monitor.rect, dwData);
+            if (!cont) {
+                log_warning(
+                    "iidx",
+                    "EnumDisplayMonitors callback requested to stop enumeration after {} monitors",
+                    count);
+                return true;
+            }
+        }
+
+        log_info(
+            "popn",
+            "EnumDisplayMonitors hook: enumerated {} monitor(s), now adding fake monitor...",
+            count);
+
+        // call it one more time with the fake monitor
+        RECT rect = {
+            .left = FAKE_MONITOR_OFFSET_X_Y,
+            .top = FAKE_MONITOR_OFFSET_X_Y,
+            .right = FAKE_MONITOR_OFFSET_X_Y + FAKE_MONITOR_WIDTH,
+            .bottom = FAKE_MONITOR_OFFSET_X_Y + FAKE_MONITOR_HEIGHT
+        };
+        lpfnEnum(FAKE_MONITOR_HMONITOR, nullptr, &rect, dwData);
+
+        return true;
+    }
+
+    BOOL
+    WINAPI
+    GetMonitorInfoA_hook(
+        HMONITOR hMonitor,
+        LPMONITORINFO lpmi) {
+
+        log_misc(
+            "popn",
+            "GetMonitorInfoA hook hit, monitor={:#x}",
+            reinterpret_cast<uint64_t>(hMonitor));
+
+        // fake monitor
+        if (hMonitor == FAKE_MONITOR_HMONITOR) {
+            log_misc(
+                "popn",
+                "GetMonitorInfoA hook hit for fake monitor, returning fake info");
+
+            lpmi->cbSize = sizeof(MONITORINFO);
+            lpmi->rcMonitor.left = FAKE_MONITOR_OFFSET_X_Y;
+            lpmi->rcMonitor.top = FAKE_MONITOR_OFFSET_X_Y;
+            lpmi->rcMonitor.right = FAKE_MONITOR_OFFSET_X_Y + FAKE_MONITOR_WIDTH;
+            lpmi->rcMonitor.bottom = FAKE_MONITOR_OFFSET_X_Y + FAKE_MONITOR_HEIGHT;
+            lpmi->rcWork = lpmi->rcMonitor;
+            lpmi->dwFlags = 0; // not primary
+            return TRUE;
+        }
+
+        // call original
+        return GetMonitorInfoA_orig(hMonitor, lpmi);
     }
 
 #endif
@@ -566,6 +675,12 @@ namespace games::popn {
         DisplayConfigGetDeviceInfo_orig =
             detour::iat_try("DisplayConfigGetDeviceInfo",
                 DisplayConfigGetDeviceInfo_hook, avs::game::DLL_INSTANCE);
+        EnumDisplayMonitors_orig =
+            detour::iat_try("EnumDisplayMonitors",
+                EnumDisplayMonitors_hook, avs::game::DLL_INSTANCE);
+        GetMonitorInfoA_orig =
+            detour::iat_try("GetMonitorInfoA",
+                GetMonitorInfoA_hook, avs::game::DLL_INSTANCE);
 
         // GUID_DEVCLASS_USB = {86E0D1E0-11D0-89B0-00A0C9054129}
         SETUPAPI_SETTINGS settings{};
