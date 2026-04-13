@@ -992,7 +992,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::CreateDeviceEx(
 
     log_info("graphics::d3d9", "IDirect3D9Ex::CreateDeviceEx num_adapters = {}", num_adapters);
     if (num_adapters == 1) {
-        num_adapters = 2;
+        num_adapters = 8;
     }
 
     for (size_t i = 0; i < num_adapters; i++) {

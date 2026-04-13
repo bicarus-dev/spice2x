@@ -96,32 +96,50 @@ namespace games::popn {
 
         // fake path
         DISPLAYCONFIG_PATH_INFO *path = &pathArray[pNumPathArrayElements_original];
+        *path = {};
+
         path->sourceInfo.adapterId.HighPart = -1;
         path->sourceInfo.adapterId.LowPart = -1;
         path->sourceInfo.id = -1;
+        path->sourceInfo.modeInfoIdx = pNumModeInfoArrayElements_original;
+        path->sourceInfo.cloneGroupId = DISPLAYCONFIG_PATH_CLONE_GROUP_INVALID;
+        path->sourceInfo.statusFlags = DISPLAYCONFIG_SOURCE_IN_USE;
+
         path->targetInfo.adapterId.HighPart = -1;
         path->targetInfo.adapterId.LowPart = -1;
-        path->targetInfo.id = -1;
-
-        // fake mode target
-        DISPLAYCONFIG_MODE_INFO *mode1 = &modeInfoArray[pNumModeInfoArrayElements_original];
-        mode1->infoType = DISPLAYCONFIG_MODE_INFO_TYPE_TARGET;
-        mode1->id = -1;
-        mode1->adapterId.HighPart = -1;
-        mode1->adapterId.LowPart = -1;
-        // don't think the game looks at the rest
+        path->targetInfo.id = -2;
+        path->targetInfo.modeInfoIdx = pNumModeInfoArrayElements_original + 1;
+        path->targetInfo.outputTechnology = DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HDMI;
+        path->targetInfo.rotation = DISPLAYCONFIG_ROTATION_IDENTITY;
+        path->targetInfo.scaling = DISPLAYCONFIG_SCALING_IDENTITY;
+        path->targetInfo.refreshRate.Numerator = 60000;
+        path->targetInfo.refreshRate.Denominator = 1000;
+        path->targetInfo.scanLineOrdering = DISPLAYCONFIG_SCANLINE_ORDERING_UNSPECIFIED;
+        path->targetInfo.statusFlags = DISPLAYCONFIG_TARGET_IN_USE;
 
         // fake mode source
-        DISPLAYCONFIG_MODE_INFO *mode2 = &modeInfoArray[pNumModeInfoArrayElements_original + 1];
-        mode2->infoType = DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE;
-        mode2->id = -1;
-        mode2->adapterId.HighPart = -1;
-        mode2->adapterId.LowPart = -1;
-        mode2->sourceMode.width = FAKE_MONITOR_WIDTH;
-        mode2->sourceMode.height = FAKE_MONITOR_HEIGHT;
-        mode2->sourceMode.pixelFormat = DISPLAYCONFIG_PIXELFORMAT_32BPP;
-        mode2->sourceMode.position.x = FAKE_MONITOR_OFFSET_X_Y;
-        mode2->sourceMode.position.y = FAKE_MONITOR_OFFSET_X_Y;
+        log_misc("popn", "add source info at index: {}", pNumModeInfoArrayElements_original);
+        DISPLAYCONFIG_MODE_INFO *mode_source = &modeInfoArray[pNumModeInfoArrayElements_original];
+        *mode_source = {};
+        mode_source->infoType = DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE;
+        mode_source->id = -1;
+        mode_source->adapterId.HighPart = -1;
+        mode_source->adapterId.LowPart = -1;
+        mode_source->sourceMode.width = FAKE_MONITOR_WIDTH;
+        mode_source->sourceMode.height = FAKE_MONITOR_HEIGHT;
+        mode_source->sourceMode.pixelFormat = DISPLAYCONFIG_PIXELFORMAT_32BPP;
+        mode_source->sourceMode.position.x = FAKE_MONITOR_OFFSET_X_Y;
+        mode_source->sourceMode.position.y = FAKE_MONITOR_OFFSET_X_Y;
+
+        // fake mode target
+        log_misc("popn", "add target info at index: {}", pNumModeInfoArrayElements_original+1);
+        DISPLAYCONFIG_MODE_INFO *mode_target = &modeInfoArray[pNumModeInfoArrayElements_original+1];
+        *mode_target = {};
+        mode_target->infoType = DISPLAYCONFIG_MODE_INFO_TYPE_TARGET;
+        mode_target->id = -2;
+        mode_target->adapterId.HighPart = -1;
+        mode_target->adapterId.LowPart = -1;
+        // don't think the game looks at the rest
 
         return ret;
     }
