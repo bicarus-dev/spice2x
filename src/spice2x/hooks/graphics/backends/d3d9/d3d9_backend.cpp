@@ -463,8 +463,20 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::RegisterSoftwareDevice(void *pIniti
 }
 
 UINT STDMETHODCALLTYPE WrappedIDirect3D9::GetAdapterCount() {
-    log_misc("graphics::d3d9", "GetAdapterCount called. real ={}, returning 2 instead", pReal->GetAdapterCount());
-    return 2;
+    UINT result = pReal->GetAdapterCount();
+
+    if (!FAKE_SUBSCREEN_ADAPTER && games::popn::is_pikapika_model() && result == 1) {
+        FAKE_SUBSCREEN_ADAPTER = true;
+        log_info(
+            "graphics::d3d9",
+            "GetAdapterCount returned 1, popn needs 2 adapters - enabliing fake submonitor mode");
+    }
+
+    if (FAKE_SUBSCREEN_ADAPTER) {
+        return 2;
+    }
+    
+    return result;
 }
 
 HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::GetAdapterIdentifier(
@@ -473,35 +485,25 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::GetAdapterIdentifier(
         D3DADAPTER_IDENTIFIER9 *pIdentifier)
 {
 
-    if (Adapter == 1) {
-        log_misc("graphics::d3d9", "GetAdapterIdentifier called for adapter 1");
-        if (pIdentifier) {
-            memset(pIdentifier, 0, sizeof(*pIdentifier));
-            memcpy(pIdentifier->DeviceName, "\\\\.\\DISPLAY_SPICE_FAKE", sizeof("\\\\.\\DISPLAY_SPICE_FAKE"));
-            pIdentifier->VendorId = 0x1234;
-            pIdentifier->DeviceId = 0x5678;
-            pIdentifier->SubSysId = 0x9abc;
-            pIdentifier->Revision = 0xdef0;
-        }
-
+    if (FAKE_SUBSCREEN_ADAPTER && Adapter == 1 && pIdentifier) {
+        *pIdentifier = {};
+        strcpy(pIdentifier->DeviceName, "\\\\.\\DISPLAY_SPICE_FAKE"); 
+        log_misc(
+            "graphics::d3d9",
+            "GetAdapterIdentifier called for fake subscreen adapter 1: {}",
+            pIdentifier->DeviceName);
         return S_OK;
     }
     
-    const HRESULT ret = pReal->GetAdapterIdentifier(Adapter, Flags, pIdentifier);
-    
-    log_misc("graphics::d3d9", "IDirect3D9::GetAdapterIdentifier returned {} for adapter {}, flags {:#x}, name={}",
-            FMT_HRESULT(ret), Adapter, Flags, pIdentifier ? pIdentifier->DeviceName : "null");
-
-    return ret;
+    CHECK_RESULT(pReal->GetAdapterIdentifier(Adapter, Flags, pIdentifier));
 }
 
 UINT STDMETHODCALLTYPE WrappedIDirect3D9::GetAdapterModeCount(UINT Adapter, D3DFORMAT Format) {
-    if (Adapter == 1) {
-        log_misc("graphics::d3d9", "GetAdapterModeCount called for adapter {}, which is unexpected since most games should only be using the primary adapter (0)",
-                Adapter);
-
+    if (FAKE_SUBSCREEN_ADAPTER && Adapter == 1) {
+        log_misc("graphics::d3d9", "GetAdapterModeCount called for fake subscreen adapter");
         return 1;
     }
+
     return pReal->GetAdapterModeCount(Adapter, Format);
 }
 
@@ -511,18 +513,13 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::EnumAdapterModes(
         UINT Mode,
         D3DDISPLAYMODE *pMode)
 {
-    if (Adapter == 1) {
-        log_misc("graphics::d3d9", "EnumAdapterModes called for adapter {}, which is unexpected since most games should only be using the primary adapter (0)",
-                Adapter);
-
+    if (FAKE_SUBSCREEN_ADAPTER && Adapter == 1) {
+        log_misc("graphics::d3d9", "EnumAdapterModes called for fake subscreen adapter");
         if (Mode == 0 && pMode) {
-            log_misc("graphics::d3d9", "EnumAdapterModes returns fake values for adapter {}", Adapter);
-            // return some dummy display mode to avoid issues with some games that don't handle zero modes well
             pMode->Width = 1280;
             pMode->Height = 800;
             pMode->RefreshRate = 60;
             pMode->Format = D3DFMT_X8R8G8B8;
-
             return S_OK;
         } else {
             return D3DERR_INVALIDCALL;
@@ -604,7 +601,6 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::EnumAdapterModes(
 }
 
 HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::GetAdapterDisplayMode(UINT Adapter, D3DDISPLAYMODE *pMode) {
-    log_misc("graphics::d3d9", "IDirect3D9::GetAdapterDisplayMode hook hit for adapter {}", Adapter);
     CHECK_RESULT(pReal->GetAdapterDisplayMode(Adapter, pMode));
 }
 
@@ -615,8 +611,6 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::CheckDeviceType(
         D3DFORMAT BackBufferFormat,
         BOOL bWindowed)
 {
-    log_misc("graphics::d3d9", "IDirect3D9::CheckDeviceType hook hit for adapter {}",
-            iAdapter);
     CHECK_RESULT(pReal->CheckDeviceType(iAdapter, DevType, DisplayFormat, BackBufferFormat, bWindowed));
 }
 
@@ -628,11 +622,11 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::CheckDeviceFormat(
         D3DRESOURCETYPE RType,
         D3DFORMAT CheckFormat)
 {
-    if (Adapter == 1) {
-        log_misc("graphics::d3d9", "CheckDeviceFormat called for adapter {}, which is unexpected since most games should only be using the primary adapter (0)",
-                Adapter);
+    if (FAKE_SUBSCREEN_ADAPTER && Adapter == 1) {
+        log_misc("graphics::d3d9", "CheckDeviceFormat called for fake subscreen adapter");
         return D3D_OK;
     }
+
     CHECK_RESULT(pReal->CheckDeviceFormat(Adapter, DeviceType, AdapterFormat, Usage, RType, CheckFormat));
 }
 
@@ -737,7 +731,6 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::GetDeviceCaps(UINT Adapter, D3DDEVT
 }
 
 HMONITOR STDMETHODCALLTYPE WrappedIDirect3D9::GetAdapterMonitor(UINT Adapter) {
-    log_misc("graphics::d3d9", "IDirect3D9::GetAdapterMonitor hook hit for {}", Adapter);
     return pReal->GetAdapterMonitor(Adapter);
 }
 
@@ -988,11 +981,6 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::CreateDeviceEx(
         }
     }
 
-    log_info("graphics::d3d9", "IDirect3D9Ex::CreateDeviceEx num_adapters = {}", num_adapters);
-    // if (num_adapters == 1) {
-    //     num_adapters = 2;
-    // }
-
     for (size_t i = 0; i < num_adapters; i++) {
         auto *params = &pPresentationParameters[i];
         if (!GRAPHICS_WINDOWED){
@@ -1160,10 +1148,6 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::CreateDeviceEx(
             (orig_behavior_flags & D3DCREATE_ADAPTERGROUP_DEVICE)) {
             graphics_d3d9_ldj_init_sub_screen(*ppReturnedDeviceInterface, &pPresentationParameters[1]);
         }
-
-        // if (avs::game::is_model("M39")) {
-        //     graphics_d3d9_ldj_init_sub_screen(*ppReturnedDeviceInterface, &pPresentationParameters[1]);
-        // }
     }
 
     return result;
@@ -1199,8 +1183,6 @@ static void graphics_d3d9_ldj_init_sub_screen(IDirect3DDevice9Ex *device, D3DPRE
     }
     */
 
-    log_misc("gfx", "graphics_d3d9_ldj_init_sub_screen BEGIN");
-
     if (GRAPHICS_WINDOWED) {
         present_params->Windowed = true;
         present_params->FullScreen_RefreshRateInHz = 0;
@@ -1229,8 +1211,6 @@ static void graphics_d3d9_ldj_init_sub_screen(IDirect3DDevice9Ex *device, D3DPRE
             log_info("graphics::d3d9", "created additional swap chain for fullscreen mode");
         }
     }
-
-    log_misc("gfx", "graphics_d3d9_ldj_init_sub_screen END");
 }
 
 IDirect3DSurface9 *graphics_d3d9_ldj_get_sub_screen() {
