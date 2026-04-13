@@ -411,6 +411,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3DDevice9::GetBackBuffer(
         IDirect3DSurface9 **ppBackBuffer)
 {
     WRAP_VERBOSE;
+    log_misc("graphics::d3d9", "GetBackBuffer({}, {})", iSwapChain, iBackBuffer);
     CHECK_RESULT(pReal->GetBackBuffer(iSwapChain, iBackBuffer, Type, ppBackBuffer));
 }
 
@@ -685,6 +686,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3DDevice9::SetRenderTarget(
         IDirect3DSurface9 *pRenderTarget)
 {
     WRAP_DEBUG;
+    log_misc("graphics::d3d9", "SetRenderTarget({})", RenderTargetIndex);
     CHECK_RESULT(pReal->SetRenderTarget(RenderTargetIndex, pRenderTarget));
 }
 
@@ -700,6 +702,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3DDevice9::SetDepthStencilSurface(
         IDirect3DSurface9 *pNewZStencil)
 {
     WRAP_DEBUG;
+    log_misc("graphics::d3d9", "SetDepthStencilSurface({})", fmt::ptr(pNewZStencil));
     CHECK_RESULT(pReal->SetDepthStencilSurface(pNewZStencil));
 }
 
@@ -957,6 +960,8 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3DDevice9::Clear(
         DWORD Stencil)
 {
     WRAP_DEBUG;
+    log_misc("graphics::d3d9", "WrappedIDirect3DDevice9::Clear({}, {}, {}, {}, {}, {})",
+            Count, pRects ? "non-null" : "null", Flags, Color, Z, Stencil);
     CHECK_RESULT(pReal->Clear(Count, pRects, Flags, Color, Z, Stencil));
 }
 
