@@ -471,10 +471,18 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::GetAdapterIdentifier(
         DWORD Flags,
         D3DADAPTER_IDENTIFIER9 *pIdentifier)
 {
+    log_misc("graphics::d3d9", "IDirect3D9::GetAdapterIdentifier hook hit for adapter {}, flags {:#x}",
+            Adapter, Flags);
     CHECK_RESULT(pReal->GetAdapterIdentifier(Adapter, Flags, pIdentifier));
 }
 
 UINT STDMETHODCALLTYPE WrappedIDirect3D9::GetAdapterModeCount(UINT Adapter, D3DFORMAT Format) {
+    if (Adapter == 1) {
+        log_misc("graphics::d3d9", "GetAdapterModeCount called for adapter {}, which is unexpected since most games should only be using the primary adapter (0)",
+                Adapter);
+
+        return 1;
+    }
     return pReal->GetAdapterModeCount(Adapter, Format);
 }
 
@@ -484,6 +492,24 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::EnumAdapterModes(
         UINT Mode,
         D3DDISPLAYMODE *pMode)
 {
+    if (Adapter == 1) {
+        log_misc("graphics::d3d9", "EnumAdapterModes called for adapter {}, which is unexpected since most games should only be using the primary adapter (0)",
+                Adapter);
+
+        if (Mode == 0 && pMode) {
+            log_misc("graphics::d3d9", "EnumAdapterModes returns fake values for adapter {}", Adapter);
+            // return some dummy display mode to avoid issues with some games that don't handle zero modes well
+            pMode->Width = 1280;
+            pMode->Height = 800;
+            pMode->RefreshRate = 60;
+            pMode->Format = D3DFMT_X8R8G8B8;
+
+            return S_OK;
+        } else {
+            return D3DERR_INVALIDCALL;
+        }
+    }
+
     HRESULT ret = pReal->EnumAdapterModes(Adapter, Format, Mode, pMode);
 
     if (SUCCEEDED(ret) && pMode) {
@@ -559,6 +585,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::EnumAdapterModes(
 }
 
 HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::GetAdapterDisplayMode(UINT Adapter, D3DDISPLAYMODE *pMode) {
+    log_misc("graphics::d3d9", "IDirect3D9::GetAdapterDisplayMode hook hit for adapter {}", Adapter);
     CHECK_RESULT(pReal->GetAdapterDisplayMode(Adapter, pMode));
 }
 
@@ -569,6 +596,8 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::CheckDeviceType(
         D3DFORMAT BackBufferFormat,
         BOOL bWindowed)
 {
+    log_misc("graphics::d3d9", "IDirect3D9::CheckDeviceType hook hit for adapter {}",
+            iAdapter);
     CHECK_RESULT(pReal->CheckDeviceType(iAdapter, DevType, DisplayFormat, BackBufferFormat, bWindowed));
 }
 
@@ -580,6 +609,11 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::CheckDeviceFormat(
         D3DRESOURCETYPE RType,
         D3DFORMAT CheckFormat)
 {
+    if (Adapter == 1) {
+        log_misc("graphics::d3d9", "CheckDeviceFormat called for adapter {}, which is unexpected since most games should only be using the primary adapter (0)",
+                Adapter);
+        return D3D_OK;
+    }
     CHECK_RESULT(pReal->CheckDeviceFormat(Adapter, DeviceType, AdapterFormat, Usage, RType, CheckFormat));
 }
 
@@ -686,6 +720,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::GetDeviceCaps(UINT Adapter, D3DDEVT
 }
 
 HMONITOR STDMETHODCALLTYPE WrappedIDirect3D9::GetAdapterMonitor(UINT Adapter) {
+    log_misc("graphics::d3d9", "IDirect3D9::GetAdapterMonitor hook hit for {}", Adapter);
     return pReal->GetAdapterMonitor(Adapter);
 }
 
@@ -934,6 +969,11 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::CreateDeviceEx(
         if (SUCCEEDED(this->pReal->GetDeviceCaps(Adapter, DeviceType, &device_caps))) {
             num_adapters = device_caps.NumberOfAdaptersInGroup;
         }
+    }
+
+    log_info("graphics::d3d9", "IDirect3D9Ex::CreateDeviceEx num_adapters = {}", num_adapters);
+    if (num_adapters == 1) {
+        num_adapters = 2;
     }
 
     for (size_t i = 0; i < num_adapters; i++) {

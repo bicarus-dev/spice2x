@@ -285,6 +285,8 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3DDevice9::GetSwapChain(
 {
     WRAP_VERBOSE_FMT("GetSwapChain({})", iSwapChain);
 
+    log_info("gfx", "GetSwapChain({})", iSwapChain);
+
     if (iSwapChain == 0) {
         if (!main_swapchain) {
             HRESULT ret = pReal->GetSwapChain(iSwapChain, ppSwapChain);
