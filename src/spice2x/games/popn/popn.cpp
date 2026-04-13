@@ -737,7 +737,6 @@ namespace games::popn {
 
         wintouchemu::FORCE = true;
         wintouchemu::INJECT_MOUSE_AS_WM_TOUCH = true;
-        wintouchemu::hook_title_ends("", "Main Screen", avs::game::DLL_INSTANCE);
 
 #endif
 
