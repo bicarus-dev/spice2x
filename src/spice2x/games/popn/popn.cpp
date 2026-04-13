@@ -26,8 +26,99 @@ namespace games::popn {
     bool SHOW_PIKA_MONITOR_WARNING = false;
     
 #if SPICE64 && !SPICE_XP
-    
+
+    static decltype(GetDisplayConfigBufferSizes) *GetDisplayConfigBufferSizes_orig = nullptr;
+    static decltype(QueryDisplayConfig) *QueryDisplayConfig_orig = nullptr;
     static decltype(DisplayConfigGetDeviceInfo) *DisplayConfigGetDeviceInfo_orig = nullptr;
+
+
+    UINT32 pNumPathArrayElements_original = 0;
+    UINT32 pNumModeInfoArrayElements_original = 0;
+
+    static
+    LONG
+    WINAPI
+    GetDisplayConfigBufferSizes_hook(
+        UINT32 Flags,
+        UINT32 *pNumPathArrayElements,
+        UINT32 *pNumModeInfoArrayElements)
+    {
+        log_misc("popn", "GetDisplayConfigBufferSizes hook hit");
+
+        // call original
+        const auto ret = GetDisplayConfigBufferSizes_orig(Flags, pNumPathArrayElements, pNumModeInfoArrayElements);
+
+        pNumPathArrayElements_original = *pNumPathArrayElements;
+        pNumModeInfoArrayElements_original = *pNumModeInfoArrayElements;
+
+        *pNumPathArrayElements += 1;
+        *pNumModeInfoArrayElements += 2;
+
+        return ret;
+    }
+
+    static
+    LONG
+    WINAPI
+    QueryDisplayConfig_hook(
+        UINT32 flags,
+        UINT32* numPathArrayElements,
+        DISPLAYCONFIG_PATH_INFO* pathArray,
+        UINT32* numModeInfoArrayElements,
+        DISPLAYCONFIG_MODE_INFO* modeInfoArray,
+        DISPLAYCONFIG_TOPOLOGY_ID* currentTopologyId)
+    {
+
+        log_misc(
+            "popn",
+            "QueryDisplayConfig hook hit, paths={}, modes={}",
+            *numPathArrayElements, *numModeInfoArrayElements);
+
+        // call original
+        UINT32 num_paths = pNumPathArrayElements_original;
+        UINT32 num_modes = pNumModeInfoArrayElements_original;
+        const auto ret = QueryDisplayConfig_orig(
+            flags,
+            &num_paths, pathArray,
+            &num_modes, modeInfoArray,
+            currentTopologyId);
+
+        if (ret != ERROR_SUCCESS) {
+            log_warning("popn", "QueryDisplayConfig_orig failed with error code {}", ret);
+            return ret;
+        }
+
+        // fake path
+        DISPLAYCONFIG_PATH_INFO *path = &pathArray[pNumPathArrayElements_original];
+        path->sourceInfo.adapterId.HighPart = -1;
+        path->sourceInfo.adapterId.LowPart = -1;
+        path->sourceInfo.id = -1;
+        path->targetInfo.adapterId.HighPart = -1;
+        path->targetInfo.adapterId.LowPart = -1;
+        path->targetInfo.id = -1;
+
+        // fake mode target
+        DISPLAYCONFIG_MODE_INFO *mode1 = &modeInfoArray[pNumModeInfoArrayElements_original];
+        mode1->infoType = DISPLAYCONFIG_MODE_INFO_TYPE_TARGET;
+        mode1->id = -1;
+        mode1->adapterId.HighPart = -1;
+        mode1->adapterId.LowPart = -1;
+        // don't think the game looks at the rest
+
+        // fake mode source
+        DISPLAYCONFIG_MODE_INFO *mode2 = &modeInfoArray[pNumModeInfoArrayElements_original + 1];
+        mode2->infoType = DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE;
+        mode2->id = -1;
+        mode2->adapterId.HighPart = -1;
+        mode2->adapterId.LowPart = -1;
+        mode2->sourceMode.width = 1280;
+        mode2->sourceMode.height = 800;
+        mode2->sourceMode.pixelFormat = DISPLAYCONFIG_PIXELFORMAT_32BPP;
+        mode2->sourceMode.position.x = -99999;
+        mode2->sourceMode.position.y = -99999;
+
+        return ret;
+    }
 
     static
     LONG
@@ -37,6 +128,36 @@ namespace games::popn {
         if (requestPacket == nullptr) {
             return DisplayConfigGetDeviceInfo_orig(requestPacket);
         }
+
+        // fake monitor
+        if (requestPacket->id == static_cast<UINT32>(-1) &&
+            requestPacket->adapterId.HighPart == static_cast<LONG>(-1) &&
+            requestPacket->adapterId.LowPart == static_cast<DWORD>(-1)) {
+            log_misc(
+                "popn",
+                "DisplayConfigGetDeviceInfo hook hit for fake monitor, type={}, size={}, id={}, luid={}/{}",
+                static_cast<int>(requestPacket->type),
+                requestPacket->size,
+                requestPacket->id,
+                requestPacket->adapterId.HighPart,
+                requestPacket->adapterId.LowPart);
+
+            if (requestPacket->type == DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME) {
+                const auto target = reinterpret_cast<DISPLAYCONFIG_TARGET_DEVICE_NAME*>(requestPacket);
+                target->flags.value = 0;
+                target->outputTechnology = DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HDMI;
+                target->connectorInstance = 0;
+                memcpy(target->monitorFriendlyDeviceName, L"Spice Fake Monitor", sizeof(L"Spice Fake Monitor"));
+                memcpy(target->monitorDevicePath, L"\\\\?\\SpiceFakeMonitor", sizeof(L"\\\\?\\SpiceFakeMonitor"));
+
+            } else if (requestPacket->type == DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME) {
+                const auto source = reinterpret_cast<DISPLAYCONFIG_SOURCE_DEVICE_NAME*>(requestPacket);
+                memcpy(source->viewGdiDeviceName, L"\\\\.\\DISPLAY_SPICE_FAKE", sizeof(L"\\\\.\\DISPLAY_SPICE_FAKE"));
+            }
+
+            return ERROR_SUCCESS;
+        }
+
         const auto ret = DisplayConfigGetDeviceInfo_orig(requestPacket);
         log_misc(
             "popn",
@@ -436,6 +557,12 @@ namespace games::popn {
         }
 
         // monitor hook
+        GetDisplayConfigBufferSizes_orig =
+            detour::iat_try("GetDisplayConfigBufferSizes",
+                GetDisplayConfigBufferSizes_hook, avs::game::DLL_INSTANCE);
+        QueryDisplayConfig_orig =
+            detour::iat_try("QueryDisplayConfig",
+                QueryDisplayConfig_hook, avs::game::DLL_INSTANCE);
         DisplayConfigGetDeviceInfo_orig =
             detour::iat_try("DisplayConfigGetDeviceInfo",
                 DisplayConfigGetDeviceInfo_hook, avs::game::DLL_INSTANCE);
