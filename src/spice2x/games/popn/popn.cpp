@@ -97,12 +97,12 @@ namespace games::popn {
         // fake path
         DISPLAYCONFIG_PATH_INFO *path = &pathArray[pNumPathArrayElements_original];
         *path = {};
+        path->flags = DISPLAYCONFIG_PATH_ACTIVE;
 
         path->sourceInfo.adapterId.HighPart = -1;
         path->sourceInfo.adapterId.LowPart = -1;
         path->sourceInfo.id = -1;
         path->sourceInfo.modeInfoIdx = pNumModeInfoArrayElements_original;
-        path->sourceInfo.cloneGroupId = DISPLAYCONFIG_PATH_CLONE_GROUP_INVALID;
         path->sourceInfo.statusFlags = DISPLAYCONFIG_SOURCE_IN_USE;
 
         path->targetInfo.adapterId.HighPart = -1;
@@ -114,7 +114,8 @@ namespace games::popn {
         path->targetInfo.scaling = DISPLAYCONFIG_SCALING_IDENTITY;
         path->targetInfo.refreshRate.Numerator = 60000;
         path->targetInfo.refreshRate.Denominator = 1000;
-        path->targetInfo.scanLineOrdering = DISPLAYCONFIG_SCANLINE_ORDERING_UNSPECIFIED;
+        path->targetInfo.scanLineOrdering = DISPLAYCONFIG_SCANLINE_ORDERING_PROGRESSIVE;
+        path->targetInfo.targetAvailable = true;
         path->targetInfo.statusFlags = DISPLAYCONFIG_TARGET_IN_USE;
 
         // fake mode source
@@ -154,7 +155,7 @@ namespace games::popn {
         }
 
         // fake monitor
-        if (requestPacket->id == static_cast<UINT32>(-1) &&
+        if ((requestPacket->id == static_cast<UINT32>(-1) || requestPacket->id == static_cast<UINT32>(-2)) &&
             requestPacket->adapterId.HighPart == static_cast<LONG>(-1) &&
             requestPacket->adapterId.LowPart == static_cast<DWORD>(-1)) {
             log_misc(
@@ -177,6 +178,8 @@ namespace games::popn {
             } else if (requestPacket->type == DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME) {
                 const auto source = reinterpret_cast<DISPLAYCONFIG_SOURCE_DEVICE_NAME*>(requestPacket);
                 memcpy(source->viewGdiDeviceName, L"\\\\.\\DISPLAY_SPICE_FAKE", sizeof(L"\\\\.\\DISPLAY_SPICE_FAKE"));
+            } else {
+                log_fatal("popn", "unexpected device info type {} for fake monitor", static_cast<int>(requestPacket->type));
             }
 
             return ERROR_SUCCESS;

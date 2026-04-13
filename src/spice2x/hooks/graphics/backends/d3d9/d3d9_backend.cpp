@@ -477,7 +477,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::GetAdapterIdentifier(
         log_misc("graphics::d3d9", "GetAdapterIdentifier called for adapter 1");
         if (pIdentifier) {
             memset(pIdentifier, 0, sizeof(*pIdentifier));
-            memcpy(pIdentifier->DeviceName, L"\\\\.\\DISPLAY_SPICE_FAKE", sizeof(L"\\\\.\\DISPLAY_SPICE_FAKE"));
+            memcpy(pIdentifier->DeviceName, "\\\\.\\DISPLAY_SPICE_FAKE", sizeof("\\\\.\\DISPLAY_SPICE_FAKE"));
             pIdentifier->VendorId = 0x1234;
             pIdentifier->DeviceId = 0x5678;
             pIdentifier->SubSysId = 0x9abc;
