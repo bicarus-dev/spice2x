@@ -20,19 +20,19 @@ namespace overlay::windows {
         }
 
         this->resize_callback = keep_16_by_10;
-        float size = 0.5f;
-        this->init_size = ImVec2(
-            ImGui::GetIO().DisplaySize.x * size,
-            (ImGui::GetIO().DisplaySize.x * size * 10 / 16) + ImGui::GetFrameHeight());
-
+        
         this->size_max = ImVec2(
             ImGui::GetIO().DisplaySize.x - ImGui::GetFrameHeight() * 2,
             ImGui::GetIO().DisplaySize.y - ImGui::GetFrameHeight() * 2);
 
-        // middle / bottom
+        // display on the right, on top of the opponent character
+        // but don't block the judge display on the bottom right corner
+        this->init_size = ImVec2(
+            ImGui::GetIO().DisplaySize.x * 584 / 1920,
+            ImGui::GetIO().DisplaySize.y * 384 / 1080);
         this->init_pos = ImVec2(
-            ImGui::GetIO().DisplaySize.x / 2 - this->init_size.x / 2,
-            ImGui::GetIO().DisplaySize.y - this->init_size.y - (ImGui::GetFrameHeight() / 2));
+            ImGui::GetIO().DisplaySize.x - this->init_size.x,
+            ImGui::GetIO().DisplaySize.y - this->init_size.y - (ImGui::GetIO().DisplaySize.y * 126 / 1080));
     }
 
     void PopnSubScreen::touch_transform(const ImVec2 xy_in, LONG *x_out, LONG *y_out) {
