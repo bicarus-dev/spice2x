@@ -730,9 +730,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::GetDeviceCaps(UINT Adapter, D3DDEVT
             pCaps->NumberOfAdaptersInGroup = 1;
         }
     } else if (games::popn::is_pikapika_model()) {
-        if (GRAPHICS_WINDOWED) {
-            pCaps->NumberOfAdaptersInGroup = 2;
-        }
+        pCaps->NumberOfAdaptersInGroup = 2;
     }
 
     return ret;
@@ -991,9 +989,9 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::CreateDeviceEx(
     }
 
     log_info("graphics::d3d9", "IDirect3D9Ex::CreateDeviceEx num_adapters = {}", num_adapters);
-    if (num_adapters == 1) {
-        num_adapters = 8;
-    }
+    // if (num_adapters == 1) {
+    //     num_adapters = 2;
+    // }
 
     for (size_t i = 0; i < num_adapters; i++) {
         auto *params = &pPresentationParameters[i];
@@ -1162,6 +1160,10 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::CreateDeviceEx(
             (orig_behavior_flags & D3DCREATE_ADAPTERGROUP_DEVICE)) {
             graphics_d3d9_ldj_init_sub_screen(*ppReturnedDeviceInterface, &pPresentationParameters[1]);
         }
+
+        // if (avs::game::is_model("M39")) {
+        //     graphics_d3d9_ldj_init_sub_screen(*ppReturnedDeviceInterface, &pPresentationParameters[1]);
+        // }
     }
 
     return result;
@@ -1197,6 +1199,8 @@ static void graphics_d3d9_ldj_init_sub_screen(IDirect3DDevice9Ex *device, D3DPRE
     }
     */
 
+    log_misc("gfx", "graphics_d3d9_ldj_init_sub_screen BEGIN");
+
     if (GRAPHICS_WINDOWED) {
         present_params->Windowed = true;
         present_params->FullScreen_RefreshRateInHz = 0;
@@ -1225,6 +1229,8 @@ static void graphics_d3d9_ldj_init_sub_screen(IDirect3DDevice9Ex *device, D3DPRE
             log_info("graphics::d3d9", "created additional swap chain for fullscreen mode");
         }
     }
+
+    log_misc("gfx", "graphics_d3d9_ldj_init_sub_screen END");
 }
 
 IDirect3DSurface9 *graphics_d3d9_ldj_get_sub_screen() {

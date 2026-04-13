@@ -249,6 +249,10 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3DDevice9::CreateAdditionalSwapChain(
 {
     WRAP_VERBOSE;
 
+    log_info("gfx", "CreateAdditionalSwapChain({}, {})",
+            pPresentationParameters->BackBufferWidth,
+            pPresentationParameters->BackBufferHeight);
+
     HRESULT hr = pReal->CreateAdditionalSwapChain(pPresentationParameters, ppSwapChain);
     bool create_swap_chain = false;
     if (avs::game::is_model({"LDJ", "KFC", "M39"})) {
