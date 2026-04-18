@@ -772,11 +772,11 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .category = "Game Options (Advanced)",
     },
     {
-        .title = "SDVX Force 720p",
+        .title = "SDVX Vivid Wave Force 720p Window (DEPRECATED - use -windowsize instead)",
         .name = "sdvx720",
-        .desc = "Force Sound Voltex 720p display mode, used by older games. "
-            "For newer games, use window resize function instead.",
+        .desc = "Old & deprecated option for launching Vivid Wave in 720p when using windowed mode.",
         .type = OptionType::Bool,
+        .hidden = true,
         .game_name = "Sound Voltex",
         .category = "Game Options (Advanced)",
     },
