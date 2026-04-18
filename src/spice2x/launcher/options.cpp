@@ -32,6 +32,7 @@ static const std::vector<std::string> CATEGORY_ORDER_BASIC = {
 
 static const std::vector<std::string> CATEGORY_ORDER_ADVANCED = {
     "Game Options (Advanced)",
+    "Game Options (Peripherals)",
     "Overlay",
     "Network (Advanced)",
     "Performance",
@@ -513,7 +514,7 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .desc = "Flip the camera order.",
         .type = OptionType::Bool,
         .game_name = "Beatmania IIDX",
-        .category = "Game Options (Advanced)",
+        .category = "Game Options (Peripherals)",
     },
     {
         // IIDXDisableCameras
@@ -523,7 +524,7 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .type = OptionType::Bool,
         .hidden = true,
         .game_name = "Beatmania IIDX",
-        .category = "Game Options",
+        .category = "Game Options (Peripherals)",
     },
     {
         // IIDXCabCamAccess
@@ -533,7 +534,7 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
             "Only turn this on if you have OFFICIAL arcade cameras connected to the correct USB ports. Default: auto.",
         .type = OptionType::Enum,
         .game_name = "Beatmania IIDX",
-        .category = "Game Options (Advanced)",
+        .category = "Game Options (Peripherals)",
         .elements = {
             {"auto", ""},
             {"off", ""},
@@ -549,7 +550,7 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .desc = "Experimental camera support for IIDX 27+ via texture hooking. Requires camera(s) that support YUY2 or NV12 encoding.",
         .type = OptionType::Bool,
         .game_name = "Beatmania IIDX",
-        .category = "Game Options (Advanced)",
+        .category = "Game Options (Peripherals)",
     },
     {
         // IIDXCamHookRatio
@@ -561,7 +562,7 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .type = OptionType::Enum,
         .hidden = true,
         .game_name = "Beatmania IIDX",
-        .category = "Game Options (Advanced)",
+        .category = "Game Options (Peripherals)",
         .elements = {
             {"43", "4:3"},
             {"169", "16:9"},
@@ -579,7 +580,7 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .type = OptionType::Text,
         .setting_name = "0x5817a0,0x6fffbd8,0xbbae40,0xe0,0x30",
         .game_name = "Beatmania IIDX",
-        .category = "Game Options (Advanced)",
+        .category = "Game Options (Peripherals)",
     },
     {
         // IIDXCamHookTopId
@@ -594,7 +595,7 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .type = OptionType::Text,
         .setting_name = "vid_1234&pid_5678",
         .game_name = "Beatmania IIDX",
-        .category = "Game Options (Advanced)",
+        .category = "Game Options (Peripherals)",
     },
     {
         // IIDXCamHookFrontId
@@ -609,7 +610,7 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .type = OptionType::Text,
         .setting_name = "vid_90ab&pid_cdef",
         .game_name = "Beatmania IIDX",
-        .category = "Game Options (Advanced)",
+        .category = "Game Options (Peripherals)",
     },
     {
         .title = "IIDX Sound Output Device",
@@ -786,7 +787,7 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .desc = "Enable Sound Voltex printer emulation.",
         .type = OptionType::Bool,
         .game_name = "Sound Voltex",
-        .category = "Game Options (Advanced)",
+        .category = "Game Options (Peripherals)",
     },
     {
         // SDVXPrinterOutputPath
@@ -795,7 +796,7 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .desc = "Path to folder where images will be stored.",
         .type = OptionType::Text,
         .game_name = "Sound Voltex",
-        .category = "Game Options (Advanced)",
+        .category = "Game Options (Peripherals)",
         .picker = OptionPickerType::DirectoryPath,
     },
     {
@@ -804,7 +805,7 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .desc = "Clean up saved images in the output directory on startup.",
         .type = OptionType::Bool,
         .game_name = "Sound Voltex",
-        .category = "Game Options (Advanced)",
+        .category = "Game Options (Peripherals)",
     },
     {
         .title = "SDVX Printer Output Overwrite",
@@ -812,7 +813,7 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .desc = "Always overwrite the same file in output directory.",
         .type = OptionType::Bool,
         .game_name = "Sound Voltex",
-        .category = "Game Options (Advanced)",
+        .category = "Game Options (Peripherals)",
     },
     {
         // SDVXPrinterOutputFormat
@@ -822,7 +823,7 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .type = OptionType::Text,
         .setting_name = "(png/bmp/tga/jpg)",
         .game_name = "Sound Voltex",
-        .category = "Game Options (Advanced)",
+        .category = "Game Options (Peripherals)",
     },
     {
         .title = "SDVX Printer JPG Quality",
@@ -831,7 +832,7 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .type = OptionType::Integer,
         .setting_name = "(0-100)",
         .game_name = "Sound Voltex",
-        .category = "Game Options (Advanced)",
+        .category = "Game Options (Peripherals)",
     },
     {
         .title = "SDVX Disable Cameras (DEPRECATED - no longer needed)",
@@ -842,7 +843,7 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .type = OptionType::Bool,
         .hidden = true,
         .game_name = "Sound Voltex",
-        .category = "Game Options",
+        .category = "Game Options (Peripherals)",
     },
     {
         .title = "SDVX FS Subscreen Native Touch Handling",
@@ -2367,7 +2368,7 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
             "Note: this is NOT for the motion camera - you still need a real RealSense camera for that!",
         .type = OptionType::Bool,
         .game_name = "DANCERUSH",
-        .category = "Game Options",
+        .category = "Game Options (Peripherals)",
     },
     {
         // spice2x_IIDXNativeTouch
@@ -2701,7 +2702,7 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .desc = "Allow game to access camera; camera must be compatible with game.",
         .type = OptionType::Bool,
         .game_name = "LovePlus",
-        .category = "Game Options",
+        .category = "Game Options (Peripherals)",
     },
     {
         // LovePlusPrinterOutputPath
@@ -2710,7 +2711,7 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .desc = "Path to folder where images will be stored.",
         .type = OptionType::Text,
         .game_name = "LovePlus",
-        .category = "Game Options (Advanced)",
+        .category = "Game Options (Peripherals)",
         .picker = OptionPickerType::DirectoryPath,
     },
     {
@@ -2719,7 +2720,7 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .desc = "Clean up saved images in the output directory on startup.",
         .type = OptionType::Bool,
         .game_name = "LovePlus",
-        .category = "Game Options (Advanced)",
+        .category = "Game Options (Peripherals)",
     },
     {
         .title = "LovePlus Printer Output Overwrite",
@@ -2727,7 +2728,7 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .desc = "Always overwrite the same file in output directory.",
         .type = OptionType::Bool,
         .game_name = "LovePlus",
-        .category = "Game Options (Advanced)",
+        .category = "Game Options (Peripherals)",
     },
     {
         // LovePlusPrinterOutputFormat
@@ -2737,7 +2738,7 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .type = OptionType::Text,
         .setting_name = "(png/bmp/tga/jpg)",
         .game_name = "LovePlus",
-        .category = "Game Options (Advanced)",
+        .category = "Game Options (Peripherals)",
     },
     {
         .title = "LovePlus Printer JPG Quality",
@@ -2746,7 +2747,7 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .type = OptionType::Integer,
         .setting_name = "(0-100)",
         .game_name = "LovePlus",
-        .category = "Game Options (Advanced)",
+        .category = "Game Options (Peripherals)",
     },
     {
         // OptionConflictResolution
@@ -2767,7 +2768,7 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
             "option to bypass camera error during boot, allowing you to try out the game.",
         .type = OptionType::Bool,
         .game_name = "Otoca D'or",
-        .category = "Game Options",
+        .category = "Game Options (Peripherals)",
     }
 };
 
