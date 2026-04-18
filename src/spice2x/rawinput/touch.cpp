@@ -192,8 +192,10 @@ namespace rawinput::touch {
                 contact_count = std::max(contact_count, (size_t) hid->value_states_raw[index]);
             }
 
+            // https://learn.microsoft.com/en-us/windows-hardware/design/component-guidelines/touchscreen-packet-reporting-modes
             // hybrid mode devices will report a contact count of 0 for subsequent reports that are
             // part of the same initial frame
+            // most laptops and touchscreens are like this - they have the contact count set to 5 but can actually report up to 10 fingers
             if (contact_count > 0) {
                 if (contact_count > touch_report_count) {
                     touch.remaining_contact_count = contact_count - touch_report_count;
@@ -215,6 +217,12 @@ namespace rawinput::touch {
         std::vector<HIDTouchPoint> touch_points;
         touch_points.reserve(touch.elements_x.size());
         for (size_t i = 0; i < touch.elements_x.size(); i++) {
+
+            // if there are no more touch events to handle, exit out early
+            if (touch_report_count == 0) {
+                break;
+            }
+            touch_report_count--;
 
             // build touch point
             HIDTouchPoint hid_tp{};
@@ -245,17 +253,6 @@ namespace rawinput::touch {
             if (INVERTED) {
                 hid_tp.x = 1.f - hid_tp.x;
                 hid_tp.y = 1.f - hid_tp.y;
-            }
-
-            // check if this touch point should be considered valid
-            //
-            // If "Contact count" reports there are no touch reports remaining and the X and Y
-            // coordinates of this touch point are zero, then this report element should be
-            // skipped.
-            if (touch_report_count == 0 && hid_tp.x == 0.f && hid_tp.y == 0.f) {
-                continue;
-            } else if (touch_report_count > 0) {
-                touch_report_count--;
             }
 
             // generate ID (hopefully unique)
