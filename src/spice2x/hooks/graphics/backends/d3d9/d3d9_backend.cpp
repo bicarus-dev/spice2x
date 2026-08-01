@@ -1,9 +1,10 @@
 #include "d3d9_backend.h"
 
+#include <algorithm>
 #include <cassert>
 #include <memory>
+#include <optional>
 #include <thread>
-#include <vector>
 #include <external/robin_hood.h>
 
 #include <d3d9.h>
@@ -40,6 +41,7 @@
 #include "util/threadpool.h"
 
 #include "d3d9_device.h"
+#include "d3d9_diag.h"
 
 #ifdef min
 #undef min
@@ -132,78 +134,6 @@ static std::string behavior2s(DWORD behavior_flags) {
     FLAG(behavior_flags, D3DCREATE_DISABLE_PRINTSCREEN);
     FLAG(behavior_flags, D3DCREATE_SCREENSAVER);
     FLAGS_END(behavior_flags);
-}
-
-static std::string format2s(D3DFORMAT format) {
-    switch (format) {
-        ENUM_VARIANT(D3DFMT_UNKNOWN);
-        ENUM_VARIANT(D3DFMT_R8G8B8);
-        ENUM_VARIANT(D3DFMT_A8R8G8B8);
-        ENUM_VARIANT(D3DFMT_X8R8G8B8);
-        ENUM_VARIANT(D3DFMT_R5G6B5);
-        ENUM_VARIANT(D3DFMT_X1R5G5B5);
-        ENUM_VARIANT(D3DFMT_A1R5G5B5);
-        ENUM_VARIANT(D3DFMT_A4R4G4B4);
-        ENUM_VARIANT(D3DFMT_R3G3B2);
-        ENUM_VARIANT(D3DFMT_A8);
-        ENUM_VARIANT(D3DFMT_A8R3G3B2);
-        ENUM_VARIANT(D3DFMT_X4R4G4B4);
-        ENUM_VARIANT(D3DFMT_A2B10G10R10);
-        ENUM_VARIANT(D3DFMT_A8B8G8R8);
-        ENUM_VARIANT(D3DFMT_X8B8G8R8);
-        ENUM_VARIANT(D3DFMT_G16R16);
-        ENUM_VARIANT(D3DFMT_A2R10G10B10);
-        ENUM_VARIANT(D3DFMT_A16B16G16R16);
-        ENUM_VARIANT(D3DFMT_A8P8);
-        ENUM_VARIANT(D3DFMT_P8);
-        ENUM_VARIANT(D3DFMT_L8);
-        ENUM_VARIANT(D3DFMT_A8L8);
-        ENUM_VARIANT(D3DFMT_A4L4);
-        ENUM_VARIANT(D3DFMT_V8U8);
-        ENUM_VARIANT(D3DFMT_L6V5U5);
-        ENUM_VARIANT(D3DFMT_X8L8V8U8);
-        ENUM_VARIANT(D3DFMT_Q8W8V8U8);
-        ENUM_VARIANT(D3DFMT_V16U16);
-        ENUM_VARIANT(D3DFMT_A2W10V10U10);
-        ENUM_VARIANT(D3DFMT_UYVY);
-        ENUM_VARIANT(D3DFMT_YUY2);
-        ENUM_VARIANT(D3DFMT_DXT1);
-        ENUM_VARIANT(D3DFMT_DXT2);
-        ENUM_VARIANT(D3DFMT_DXT3);
-        ENUM_VARIANT(D3DFMT_DXT4);
-        ENUM_VARIANT(D3DFMT_DXT5);
-        ENUM_VARIANT(D3DFMT_MULTI2_ARGB8);
-        ENUM_VARIANT(D3DFMT_G8R8_G8B8);
-        ENUM_VARIANT(D3DFMT_R8G8_B8G8);
-        ENUM_VARIANT(D3DFMT_D16_LOCKABLE);
-        ENUM_VARIANT(D3DFMT_D32);
-        ENUM_VARIANT(D3DFMT_D15S1);
-        ENUM_VARIANT(D3DFMT_D24S8);
-        ENUM_VARIANT(D3DFMT_D24X8);
-        ENUM_VARIANT(D3DFMT_D24X4S4);
-        ENUM_VARIANT(D3DFMT_D16);
-        ENUM_VARIANT(D3DFMT_L16);
-        ENUM_VARIANT(D3DFMT_D32F_LOCKABLE);
-        ENUM_VARIANT(D3DFMT_D24FS8);
-        ENUM_VARIANT(D3DFMT_D32_LOCKABLE);
-        ENUM_VARIANT(D3DFMT_S8_LOCKABLE);
-        ENUM_VARIANT(D3DFMT_VERTEXDATA);
-        ENUM_VARIANT(D3DFMT_INDEX16);
-        ENUM_VARIANT(D3DFMT_INDEX32);
-        ENUM_VARIANT(D3DFMT_Q16W16V16U16);
-        ENUM_VARIANT(D3DFMT_R16F);
-        ENUM_VARIANT(D3DFMT_G16R16F);
-        ENUM_VARIANT(D3DFMT_A16B16G16R16F);
-        ENUM_VARIANT(D3DFMT_R32F);
-        ENUM_VARIANT(D3DFMT_G32R32F);
-        ENUM_VARIANT(D3DFMT_A32B32G32R32F);
-        ENUM_VARIANT(D3DFMT_CxV8U8);
-        ENUM_VARIANT(D3DFMT_A1);
-        ENUM_VARIANT(D3DFMT_A2B10G10R10_XR_BIAS);
-        ENUM_VARIANT(D3DFMT_BINARYBUFFER);
-        default:
-            return fmt::to_string(static_cast<uint32_t>(format));
-    }
 }
 
 static std::string presentation_interval2s(UINT presentation_interval) {
@@ -542,12 +472,12 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::EnumAdapterModes(
         /*
         log_misc("graphics::d3d9", "IDirect3D9::EnumAdapterMode({}, {}, {}) => {}x{} @ {} Hz ({})",
                 Adapter,
-                format2s(Format),
+                d3d9_diag::format_to_string(Format),
                 Mode,
                 pMode->Width,
                 pMode->Height,
                 pMode->RefreshRate,
-                format2s(pMode->Format));
+                d3d9_diag::format_to_string(pMode->Format));
                 */
 
         bool modified = false;
@@ -827,14 +757,14 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::CreateDevice(
                 i,
                 params->BackBufferWidth,
                 params->BackBufferHeight,
-                format2s(params->BackBufferFormat),
+                d3d9_diag::format_to_string(params->BackBufferFormat),
                 params->BackBufferCount,
                 static_cast<uint32_t>(params->MultiSampleType),
                 params->MultiSampleQuality,
                 static_cast<uint32_t>(params->SwapEffect),
                 params->Windowed,
                 params->EnableAutoDepthStencil,
-                format2s(params->AutoDepthStencilFormat),
+                d3d9_diag::format_to_string(params->AutoDepthStencilFormat),
                 params->Flags,
                 params->FullScreen_RefreshRateInHz,
                 presentation_interval2s(params->PresentationInterval));
@@ -899,10 +829,21 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::CreateDevice(
         // log error
         log_info("graphics::d3d9", "IDirect3D9::CreateDevice failed, hr={}", FMT_HRESULT(ret));
         log_create_device_failure(ret);
-    } else if (!D3D9_DEVICE_HOOK_DISABLE) {
-        graphics_hook_window(hFocusWindow, pPresentationParameters);
+    } else {
+        log_info("graphics::d3d9", "IDirect3D9::CreateDevice succeeded");
+        const auto active_mode_mismatch = d3d9_diag::diagnose_active_fullscreen_mode(
+                *ppReturnedDeviceInterface,
+                BehaviorFlags & D3DCREATE_ADAPTERGROUP_DEVICE ? num_adapters : 1,
+                pPresentationParameters,
+                nullptr);
+        if (active_mode_mismatch.has_value()) {
+            d3d9_diag::report_display_mode_diagnosis(active_mode_mismatch.value());
+        }
 
-        *ppReturnedDeviceInterface = new WrappedIDirect3DDevice9(hFocusWindow, *ppReturnedDeviceInterface);
+        if (!D3D9_DEVICE_HOOK_DISABLE) {
+            graphics_hook_window(hFocusWindow, pPresentationParameters);
+            *ppReturnedDeviceInterface = new WrappedIDirect3DDevice9(hFocusWindow, *ppReturnedDeviceInterface);
+        }
     }
 
     // return result
@@ -1035,14 +976,14 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::CreateDeviceEx(
                 i,
                 params->BackBufferWidth,
                 params->BackBufferHeight,
-                format2s(params->BackBufferFormat),
+                d3d9_diag::format_to_string(params->BackBufferFormat),
                 params->BackBufferCount,
                 static_cast<uint32_t>(params->MultiSampleType),
                 params->MultiSampleQuality,
                 static_cast<uint32_t>(params->SwapEffect),
                 params->Windowed,
                 params->EnableAutoDepthStencil,
-                format2s(params->AutoDepthStencilFormat),
+                d3d9_diag::format_to_string(params->AutoDepthStencilFormat),
                 params->Flags,
                 params->FullScreen_RefreshRateInHz,
                 presentation_interval2s(params->PresentationInterval));
@@ -1072,7 +1013,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::CreateDeviceEx(
                     fullscreen_display_mode->Width,
                     fullscreen_display_mode->Height,
                     fullscreen_display_mode->RefreshRate,
-                    format2s(fullscreen_display_mode->Format),
+                    d3d9_diag::format_to_string(fullscreen_display_mode->Format),
                     static_cast<uint32_t>(fullscreen_display_mode->ScanLineOrdering));
         }
     }
@@ -1148,20 +1089,31 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3D9::CreateDeviceEx(
         log_warning("graphics::d3d9", "CreateDeviceEx failed, hr={}", FMT_HRESULT(result));
         log_create_device_failure(result);
 
-    } else if (!D3D9_DEVICE_HOOK_DISABLE) {
-        graphics_hook_window(hFocusWindow, pPresentationParameters);
+    } else {
+        log_info("graphics::d3d9", "IDirect3D9Ex::CreateDeviceEx succeeded");
+        const auto active_mode_mismatch = d3d9_diag::diagnose_active_fullscreen_mode(
+                *ppReturnedDeviceInterface,
+                BehaviorFlags & D3DCREATE_ADAPTERGROUP_DEVICE ? num_adapters : 1,
+                pPresentationParameters,
+                pFullscreenDisplayMode);
+        if (active_mode_mismatch.has_value()) {
+            d3d9_diag::report_display_mode_diagnosis(active_mode_mismatch.value());
+        }
 
-        *ppReturnedDeviceInterface = new WrappedIDirect3DDevice9(hFocusWindow, *ppReturnedDeviceInterface);
+        if (!D3D9_DEVICE_HOOK_DISABLE) {
+            graphics_hook_window(hFocusWindow, pPresentationParameters);
+            *ppReturnedDeviceInterface = new WrappedIDirect3DDevice9(hFocusWindow, *ppReturnedDeviceInterface);
 
-        // initialize sub screen if the game requested a multi-head context
-        if (avs::game::is_model({"LDJ", "KFC", "M39", "M32"}) &&
-            (orig_behavior_flags & D3DCREATE_ADAPTERGROUP_DEVICE)) {
+            // initialize sub screen if the game requested a multi-head context
+            if (avs::game::is_model({"LDJ", "KFC", "M39", "M32"}) &&
+                (orig_behavior_flags & D3DCREATE_ADAPTERGROUP_DEVICE)) {
 
-            UINT i = 1;
-            if (games::gitadora::is_arena_model()) {
-                i = 2;
+                UINT i = 1;
+                if (games::gitadora::is_arena_model()) {
+                    i = 2;
+                }
+                graphics_d3d9_ldj_init_sub_screen(*ppReturnedDeviceInterface, &pPresentationParameters[i]);
             }
-            graphics_d3d9_ldj_init_sub_screen(*ppReturnedDeviceInterface, &pPresentationParameters[i]);
         }
     }
 
