@@ -22,6 +22,7 @@
 #include "hooks/graphics/backends/d3d9/d3d9_backend.h"
 #include "hooks/graphics/backends/d3d11/d3d11_backend.h"
 #include "launcher/shutdown.h"
+#include "launcher/splash.h"
 #include "overlay/overlay.h"
 #include "touch/touch.h"
 #include "touch/touch_gestures.h"
@@ -144,6 +145,12 @@ static void reset_window_hook(HWND hWnd) {
     if (WNDPROC_ORIG) {
         SetWindowLongPtrA(hWnd, GWLP_WNDPROC, (LONG_PTR) WNDPROC_ORIG);
         WNDPROC_ORIG = nullptr;
+    }
+}
+
+static void close_splash_for_visible_window(HWND hWnd, const char *source) {
+    if (hWnd != nullptr && GetAncestor(hWnd, GA_ROOT) == hWnd && IsWindowVisible(hWnd)) {
+        launcher::splash::close(hWnd, source);
     }
 }
 
@@ -746,6 +753,7 @@ static HWND WINAPI CreateWindowExA_hook(DWORD dwExStyle, LPCSTR lpClassName, LPC
         fmt::ptr(result),
         lpWindowName ? lpWindowName : "(null)");
 
+    close_splash_for_visible_window(result, "CreateWindowExA");
     return result;
 }
 
@@ -835,6 +843,7 @@ static HWND WINAPI CreateWindowExW_hook(DWORD dwExStyle, LPCWSTR lpClassName, LP
         lpWindowName ? ws2s(lpWindowName) : "(null)");
 
     disable_touch_gestures(result);
+    close_splash_for_visible_window(result, "CreateWindowExW");
     return result;
 }
 
@@ -1061,7 +1070,11 @@ static BOOL WINAPI SetWindowPos_hook(HWND hWnd, HWND hWndInsertAfter,
     }
 
     // call original
-    return SetWindowPos_orig(hWnd, hWndInsertAfter, X, Y, cx, cy, uFlags);
+    const BOOL result = SetWindowPos_orig(hWnd, hWndInsertAfter, X, Y, cx, cy, uFlags);
+    if (result && (uFlags & SWP_SHOWWINDOW)) {
+        close_splash_for_visible_window(hWnd, "SetWindowPos");
+    }
+    return result;
 }
 
 static BOOL WINAPI ShowWindow_hook(HWND hWnd, int nCmdShow) {
@@ -1101,7 +1114,9 @@ static BOOL WINAPI ShowWindow_hook(HWND hWnd, int nCmdShow) {
     }
 
     // call original
-    return ShowWindow_orig(hWnd, nCmdShow);
+    const BOOL result = ShowWindow_orig(hWnd, nCmdShow);
+    close_splash_for_visible_window(hWnd, "ShowWindow");
+    return result;
 }
 
 static ATOM WINAPI RegisterClassA_hook(const WNDCLASSA *lpWndClass) {

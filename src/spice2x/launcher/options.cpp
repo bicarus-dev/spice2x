@@ -2255,6 +2255,26 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .category = "Miscellaneous",
     },
     {
+        // StartupDisplay
+        .title = "Startup Window Mode",
+        .name = "startupdisplay",
+        .display_name = "startupmode",
+        .aliases = "startupmode",
+        .desc = "Choose which startup windows to create.\n\n"
+            "silent: create no startup windows\n\n"
+            "splash (default): splash only\n\n"
+            "console: create a console window\n\n"
+            "all: splash and create a console window",
+        .type = OptionType::Enum,
+        .category = "Miscellaneous",
+        .elements = {
+            {"silent", ""},
+            {"splash", ""},
+            {"console", ""},
+            {"all", ""},
+        },
+    },
+    {
         .title = "Load KBT/KLD Stubs",
         .name = "stubs",
         .desc = "Enables loading kbt/kld stub files.",
