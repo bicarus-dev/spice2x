@@ -10,5 +10,6 @@ namespace launcher::signal {
     extern bool USE_VEH_WORKAROUND;
 
     void attach();
+    void init_console_handler();
     void init();
 }
