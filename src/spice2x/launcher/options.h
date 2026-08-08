@@ -217,6 +217,7 @@ namespace launcher {
             AsioDownmixToStereo,
             DelayBy5Seconds,
             spice2x_DelayByNSeconds,
+            StartupDisplay,
             LoadStubs,
             AdjustOrientation,
             spice2x_AutoOrientation,

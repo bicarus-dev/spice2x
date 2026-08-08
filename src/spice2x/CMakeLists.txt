@@ -565,6 +565,7 @@ set(SOURCE_FILES ${SOURCE_FILES}
         # launcher
         launcher/launcher.cpp
         launcher/signal.cpp
+        launcher/splash.cpp
         launcher/superexit.cpp
         launcher/logger.cpp
         launcher/richpresence.cpp
@@ -735,6 +736,12 @@ endfunction()
 # once into a shared OBJECT library so spice_laa.exe only costs an extra link
 # instead of a full recompile.
 
+if(SPICE_XP)
+    set(SPICE_LAUNCHER_EXECUTABLE_TYPE)
+else()
+    set(SPICE_LAUNCHER_EXECUTABLE_TYPE WIN32)
+endif()
+
 add_library(spicetools_spice_objs OBJECT ${SOURCE_FILES})
 target_link_libraries(spicetools_spice_objs
         PUBLIC d3d9 ws2_32 version comctl32 shlwapi iphlpapi hid secur32 setupapi psapi winmm winhttp
@@ -749,7 +756,7 @@ endif()
 ###########
 
 set(RESOURCE_FILES build/manifest.manifest build/manifest.rc build/icon.rc cfg/Win32D.rc)
-add_executable(spicetools_spice ${RESOURCE_FILES})
+add_executable(spicetools_spice ${SPICE_LAUNCHER_EXECUTABLE_TYPE} ${RESOURCE_FILES})
 target_link_libraries(spicetools_spice PRIVATE spicetools_spice_objs)
 set_target_properties(spicetools_spice PROPERTIES PREFIX "")
 set_target_properties(spicetools_spice PROPERTIES OUTPUT_NAME "spice")
@@ -762,7 +769,7 @@ endif()
 ###########
 
 set(RESOURCE_FILES build/manifest.manifest build/manifest.rc build/icon.rc cfg/Win32D.rc)
-add_executable(spicetools_spice_laa ${RESOURCE_FILES})
+add_executable(spicetools_spice_laa ${SPICE_LAUNCHER_EXECUTABLE_TYPE} ${RESOURCE_FILES})
 target_link_libraries(spicetools_spice_laa PRIVATE spicetools_spice_objs)
 set_target_properties(spicetools_spice_laa PROPERTIES PREFIX "")
 set_target_properties(spicetools_spice_laa PROPERTIES OUTPUT_NAME "spice_laa")
@@ -775,7 +782,7 @@ endif()
 ###########
 
 set(RESOURCE_FILES build/manifest.manifest build/manifest.rc build/icon.rc cfg/Win32D.rc)
-add_executable(spicetools_spice_linux ${SOURCE_FILES} ${RESOURCE_FILES})
+add_executable(spicetools_spice_linux ${SPICE_LAUNCHER_EXECUTABLE_TYPE} ${SOURCE_FILES} ${RESOURCE_FILES})
 target_link_libraries(spicetools_spice_linux
         PUBLIC d3d9 ws2_32 version comctl32 shlwapi iphlpapi hid secur32 setupapi psapi winmm winhttp
         PRIVATE fmt::fmt-header-only discord-rpc imgui hash-library minhook imm32 dwmapi CpuFeatures::cpu_features)
@@ -791,7 +798,7 @@ endif()
 #############
 
 set(RESOURCE_FILES build/manifest.manifest build/manifest64.rc build/icon.rc cfg/Win32D.rc)
-add_executable(spicetools_spice64 ${SOURCE_FILES} ${RESOURCE_FILES})
+add_executable(spicetools_spice64 ${SPICE_LAUNCHER_EXECUTABLE_TYPE} ${SOURCE_FILES} ${RESOURCE_FILES})
 
 # do NOT link against: mf, mfplat, mfreadwrite; otherwise unity games will break
 target_link_libraries(spicetools_spice64
@@ -814,7 +821,7 @@ endif()
 #############
 
 set(RESOURCE_FILES build/manifest.manifest build/manifest64.rc build/icon.rc cfg/Win32D.rc)
-add_executable(spicetools_spice64_linux ${SOURCE_FILES} ${RESOURCE_FILES})
+add_executable(spicetools_spice64_linux ${SPICE_LAUNCHER_EXECUTABLE_TYPE} ${SOURCE_FILES} ${RESOURCE_FILES})
 
 # do NOT link against: mf, mfplat, mfreadwrite; otherwise unity games will break
 target_link_libraries(spicetools_spice64_linux
