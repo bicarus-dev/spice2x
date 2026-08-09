@@ -174,7 +174,7 @@ struct StartupDisplay {
 };
 
 static StartupDisplay get_startup_display(const Option &option) {
-    const std::string value = option.is_active() ? option.value_text() : "splash";
+    const std::string value = option.is_active() ? option.value_text() : "all";
     return {
         .show_console = value == "console" || value == "all",
         .show_splash = value == "splash" || value == "all",
@@ -336,7 +336,6 @@ int main_implementation(int argc, char *argv[]) {
     const bool cfg_run = options[launcher::Options::OpenConfigurator].value_bool();
     if (cfg_run) {
         CHECK_DLL_IGNORE_ARCH = true;
-        cfg::CONFIGURATOR_TYPE = cfg::ConfigType::Config;
     }
 
     StartupDisplay startup_display;
@@ -355,15 +354,13 @@ int main_implementation(int argc, char *argv[]) {
         const bool skip_elevation = options[launcher::Options::AutoElevate].is_active() &&
             options[launcher::Options::AutoElevate].value_text() == "user";
         if (!skip_elevation && !sysutils::is_running_as_admin()) {
-            log_info("launcher", "relaunching with administrator privileges");
             if (sysutils::relaunch_as_admin()) {
                 logger::stop();
-                launcher::kill(EXIT_SUCCESS);
                 return 0;
             } else {
                 // elevation failed or was denied by the user
-                log_fatal("launcher", "failed to launch with administrator privileges");
-                exit(1);
+                logger::stop();
+                return 1;
             }
         }
     }

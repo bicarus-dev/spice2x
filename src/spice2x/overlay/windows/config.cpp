@@ -100,7 +100,7 @@ namespace overlay::windows {
         this->init_size = overlay::apply_scaling_to_vector(ImVec2(800, 600));
         this->size_min = overlay::apply_scaling_to_vector(ImVec2(100, 200));
         this->init_pos = ImVec2(0, 0);
-        if (cfg::CONFIGURATOR_STANDALONE && cfg::CONFIGURATOR_TYPE == cfg::ConfigType::Config) {
+        if (cfg::CONFIGURATOR_STANDALONE) {
             this->active = true;
             this->flags |= ImGuiWindowFlags_NoResize;
             this->flags |= ImGuiWindowFlags_NoMove;

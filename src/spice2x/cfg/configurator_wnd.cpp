@@ -1,4 +1,4 @@
-﻿#include "configurator_wnd.h"
+#include "configurator_wnd.h"
 
 #include <algorithm>
 #include <cstring>
@@ -211,12 +211,9 @@ cfg::ConfiguratorWindow::ConfiguratorWindow() {
     // when spicecfg exits.
     timeutils::set_timer_resolution();
 
-    // determine window title
-    if (cfg::CONFIGURATOR_TYPE == cfg::ConfigType::Config) {
-        WINDOW_TITLE = "spice2x config (" + to_string(VERSION_STRING_CFG) + ")";
-        WINDOW_SIZE_X = 800;
-        WINDOW_SIZE_Y = 600;
-    }
+    WINDOW_TITLE = "spice2x config (" + to_string(VERSION_STRING_CFG) + ")";
+    WINDOW_SIZE_X = 800;
+    WINDOW_SIZE_Y = 600;
     this->client_width = WINDOW_SIZE_X;
     this->client_height = WINDOW_SIZE_Y;
 
