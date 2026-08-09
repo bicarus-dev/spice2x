@@ -118,6 +118,8 @@ uint32_t GRAPHICS_FS_ORIGINAL_HEIGHT = 0;
 // settings
 std::string GRAPHICS_DEVICEID = "PCI\\VEN_1002&DEV_7146";
 std::string GRAPHICS_SCREENSHOT_DIR = ".\\screenshots";
+bool GRAPHICS_SCREENSHOT_SUBSCREENS = false;
+bool GRAPHICS_SCREENSHOT_INCLUDE_OVERLAY = false;
 
 static decltype(ChangeDisplaySettingsA) *ChangeDisplaySettingsA_orig = nullptr;
 static decltype(ChangeDisplaySettingsExA) *ChangeDisplaySettingsExA_orig = nullptr;
@@ -1531,6 +1533,10 @@ bool graphics_capture_receive_jpeg(int screen, TooJpeg::WRITE_ONE_BYTE receiver,
 }
 
 std::string graphics_screenshot_genpath() {
+    return graphics_screenshot_genpath(std::vector<int> {});
+}
+
+std::string graphics_screenshot_genpath(const std::vector<int> &screens) {
 
     // verify dir path
     if (GRAPHICS_SCREENSHOT_DIR.empty()) {
@@ -1559,7 +1565,19 @@ std::string graphics_screenshot_genpath() {
     size_t id = 0;
     while (true) {
         auto filepath = fmt::format("{}\\{}_{}.png", GRAPHICS_SCREENSHOT_DIR, prefix, id);
-        if (!fileutils::file_exists(filepath)) {
+        bool available = !fileutils::file_exists(filepath);
+        for (const auto screen : screens) {
+            if (available && screen != 0) {
+                const auto screen_filepath = fmt::format(
+                        "{}\\{}_{}_{}.png",
+                        GRAPHICS_SCREENSHOT_DIR,
+                        prefix,
+                        id,
+                        screen);
+                available = !fileutils::file_exists(screen_filepath);
+            }
+        }
+        if (available) {
             return filepath;
         }
 

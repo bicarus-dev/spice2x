@@ -52,6 +52,7 @@ static const std::vector<std::string> CATEGORY_ORDER_NETWORK = {
 static const std::vector<std::string> CATEGORY_ORDER_OVERLAY = {
     "General Overlay",
     "Game Overlay",
+    "Screenshots",
     "OBS Control",
 };
 
@@ -1583,8 +1584,22 @@ static const std::vector<OptionDefinition> OPTION_DEFINITIONS = {
         .name = "screenshotpath",
         .desc = "Sets a custom path to the screenshots folder.",
         .type = OptionType::Text,
-        .category = "Path Overrides",
+        .category = "Screenshots",
         .picker = OptionPickerType::DirectoryPath,
+    },
+    {
+        .title = "Include Subscreens in Screenshots",
+        .name = "screenshotsub",
+        .desc = "Saves each registered subscreen as a separate PNG alongside the primary screenshot.",
+        .type = OptionType::Bool,
+        .category = "Screenshots",
+    },
+    {
+        .title = "Include Overlay in Screenshots",
+        .name = "screenshotoverlay",
+        .desc = "Includes Spice overlay in screenshots.",
+        .type = OptionType::Bool,
+        .category = "Screenshots",
     },
     {
         .title = "Configuration Path Override",

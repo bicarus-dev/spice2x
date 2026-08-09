@@ -152,6 +152,8 @@ namespace launcher {
             LoadMusecaModule,
             PathToModules,
             ScreenshotFolder,
+            ScreenshotSubscreens,
+            ScreenshotIncludeOverlay,
             ConfigurationPath,
             ScreenResizeConfigPath,
             PatchManagerConfigPath,

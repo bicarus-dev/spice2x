@@ -41,7 +41,7 @@
 
 #if D3D9_BACKEND_DEBUG
 #define log_debug(module, format_str, ...) logger::push( \
-    LOG_FORMAT("M", module, format_str, ## __VA_ARGS__), logger::Style::GREY)
+    LOG_FORMAT("M", module, format_str, ##__VA_ARGS__), logger::Style::GREY)
 #else
 #define log_debug(module, format_str, ...)
 #endif
@@ -1489,7 +1489,15 @@ void graphics_d3d9_on_present(
         SurfaceHook(device);
     }
 
-    // Do overlay init as many d3d9 hooks create a dummy instance to get vtable offsets and never
+    // check the screenshot key
+    graphics_poll_screenshot_hotkey();
+
+    // capture an image before overlay is drawn
+    if (!GRAPHICS_SCREENSHOT_INCLUDE_OVERLAY) {
+        graphics_d3d9_process_screenshot(wrapped_device);
+    }
+
+    // do overlay init as many d3d9 hooks create a dummy instance to get vtable offsets and never
     // call `Present`. This avoids race conditions on `IDirect3D9::CreateDevice` like with
     // `dx9osd.dll` for pfreepanic.
     if (!overlay::OVERLAY) {
@@ -1508,6 +1516,11 @@ void graphics_d3d9_on_present(
         device->EndScene();
     }
 
+    // capture an image after overlay is drawn
+    if (GRAPHICS_SCREENSHOT_INCLUDE_OVERLAY) {
+        graphics_d3d9_process_screenshot(wrapped_device);
+    }
+
     // for IIDX TDJ / SDVX UFC, handle subscreen
     const bool is_vm = games::sdvx::is_valkyrie_model();
     const bool is_tdj = avs::game::is_model("LDJ") && games::iidx::TDJ_MODE;
@@ -1522,8 +1535,8 @@ void graphics_d3d9_on_present(
         wintouchemu::update();
     }
 
-    graphics_poll_screenshot_hotkey();
-    graphics_d3d9_process_screenshot_and_capture(device, SUB_SWAP_CHAIN);
+    // save screenshot
+    graphics_d3d9_process_capture(wrapped_device);
 }
 
 void update_backbuffer_dimensions(D3DPRESENT_PARAMETERS *params) {
