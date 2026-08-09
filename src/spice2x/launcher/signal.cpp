@@ -605,6 +605,10 @@ void launcher::signal::attach() {
     log_info("signal", "attached");
 }
 
+void launcher::signal::init_console_handler() {
+    SetConsoleCtrlHandler(HandlerRoutine, TRUE);
+}
+
 void launcher::signal::init() {
 
     // load debug help library
@@ -618,7 +622,7 @@ void launcher::signal::init() {
     }
 
     // register our console ctrl handler
-    SetConsoleCtrlHandler(HandlerRoutine, TRUE);
+    launcher::signal::init_console_handler();
 
     // register our exception handler
     SetUnhandledExceptionFilter(TopLevelExceptionFilter);

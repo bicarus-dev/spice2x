@@ -1,4 +1,4 @@
-﻿#include "configurator.h"
+#include "configurator.h"
 
 #include <d3d9.h>
 
@@ -11,7 +11,6 @@ namespace cfg {
     // globals
     bool CONFIGURATOR_STANDALONE = false;
     bool CONFIGURATOR_FORCE_SOFTWARE_RENDER = false;
-    ConfigType CONFIGURATOR_TYPE = ConfigType::Config;
 
     Configurator::Configurator() {
         CONFIGURATOR_STANDALONE = true;

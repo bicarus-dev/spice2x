@@ -14,6 +14,7 @@
 
 #include "launcher.h"
 #include "logger.h"
+#include "splash.h"
 #include "nvapi/nvapi.h"
 #include "sdk/sdk.h"
 
@@ -24,6 +25,8 @@ namespace launcher {
         // (e.g., crashing, and then closing the window)
         // therefore, subsystems need to be guarded against multiple unload attempts
         log_info("launcher", "stopping subsystems");
+
+        splash::stop();
 
         sdk::fini_sdk_modules();
 

@@ -87,6 +87,7 @@
 #include "launcher/launcher.h"
 #include "launcher/logger.h"
 #include "launcher/signal.h"
+#include "launcher/splash.h"
 #include "launcher/superexit.h"
 #include "launcher/richpresence.h"
 #include "launcher/shutdown.h"
@@ -165,6 +166,30 @@ static bool check_dll(const std::string &model) {
     } else {
         return fileutils::verify_header_pe(MODULE_PATH / model);
     }
+}
+
+struct StartupDisplay {
+    bool show_console = false;
+    bool show_splash = false;
+};
+
+static StartupDisplay get_startup_display(const Option &option) {
+    const std::string value = option.is_active() ? option.value_text() : "all";
+    return {
+        .show_console = value == "console" || value == "all",
+        .show_splash = value == "splash" || value == "all",
+    };
+}
+
+static void enable_console() {
+    if (GetConsoleWindow()) {
+        return;
+    }
+    if (!AllocConsole()) {
+        log_warning("launcher", "failed to create console: {}", GetLastError());
+        return;
+    }
+    launcher::signal::init_console_handler();
 }
 
 void update_msvcrt_args(int argc, char *argv[]);
@@ -258,7 +283,6 @@ int main_implementation(int argc, char *argv[]) {
     std::string process_priority_str = "high";
     bool cardio_enabled = false;
     bool peb_print = false;
-    bool cfg_run = false;
     bool rich_presence = false;
     bool automap = false;
     bool ssl_disable = false;
@@ -309,6 +333,20 @@ int main_implementation(int argc, char *argv[]) {
     }
     auto &options = *options_ptr;
 
+    const bool cfg_run = options[launcher::Options::OpenConfigurator].value_bool();
+    if (cfg_run) {
+        CHECK_DLL_IGNORE_ARCH = true;
+    }
+
+    StartupDisplay startup_display;
+    if (!cfg_run && !cfg::CONFIGURATOR_STANDALONE) {
+#if SPICE_XP
+        startup_display.show_console = true;
+#else
+        startup_display = get_startup_display(options[launcher::Options::StartupDisplay]);
+#endif
+    }
+
 #if !SPICE_XP
 
     {
@@ -316,25 +354,25 @@ int main_implementation(int argc, char *argv[]) {
         const bool skip_elevation = options[launcher::Options::AutoElevate].is_active() &&
             options[launcher::Options::AutoElevate].value_text() == "user";
         if (!skip_elevation && !sysutils::is_running_as_admin()) {
-            log_info("launcher", "relaunching with administrator privileges");
             if (sysutils::relaunch_as_admin()) {
-                exit(0);
+                logger::stop();
+                return 0;
             } else {
                 // elevation failed or was denied by the user
-                log_fatal("launcher", "failed to launch with administrator privileges");
-                exit(1);
+                logger::stop();
+                return 1;
             }
         }
     }
 
 #endif // !SPICE_XP
 
-    // check options
-    // TODO: get rid of some booleans here and make use of the options directly
-    if (options[launcher::Options::OpenConfigurator].value_bool()) {
-        CHECK_DLL_IGNORE_ARCH = true;
-        cfg::CONFIGURATOR_TYPE = cfg::ConfigType::Config;
-        cfg_run = true;
+    if (startup_display.show_console) {
+        enable_console();
+    }
+
+    if (startup_display.show_splash) {
+        launcher::splash::start();
     }
 
     // -ea, but ignored if -url is set
@@ -2972,7 +3010,13 @@ void dump_analog_bindings() {
 }
 
 #ifndef SPICETOOLS_SPICECFG_STANDALONE
+#ifdef _MSC_VER
+int WINAPI WinMain(HINSTANCE, HINSTANCE, PSTR, int) {
+    return main_implementation(__argc, __argv);
+}
+#else
 int main(int argc, char *argv[]) {
     return main_implementation(argc, argv);
 }
+#endif
 #endif
