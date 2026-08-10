@@ -282,6 +282,17 @@ BOOL STDMETHODCALLTYPE WrappedIDirect3DDevice9::ShowCursor(
     return pReal->ShowCursor(bShow);
 }
 
+// GitaDora stores SMALL in slot 0, then LEFT and RIGHT in slots 1 and 2
+static int gfdm_screen_for_sub_swapchain(int index) {
+    static constexpr int screens[] { 2, 1, 3 };
+    return screens[index];
+}
+
+static bool gfdm_sub_swapchain_is_visible(int index) {
+    return !GRAPHICS_PREVENT_SECONDARY_WINDOWS &&
+        (!GRAPHICS_GITADORA_HIDE_SIDE_WINDOWS || index == 0);
+}
+
 HRESULT STDMETHODCALLTYPE WrappedIDirect3DDevice9::CreateAdditionalSwapChain(
         D3DPRESENT_PARAMETERS *pPresentationParameters,
         IDirect3DSwapChain9 **ppSwapChain)
@@ -334,22 +345,27 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3DDevice9::CreateAdditionalSwapChain(
     }
 
     int index = 0;
-    bool create_swap_chain = false;
+    bool cache_swap_chain = false;
+    bool allow_fake_swap_chain = false;
     bool create_fake_swap_chain = false;
+    const bool override_gfdm_swap_chains = games::gitadora::is_arena_model() &&
+        (GRAPHICS_PREVENT_SECONDARY_WINDOWS || GRAPHICS_GITADORA_HIDE_SIDE_WINDOWS);
     if (avs::game::is_model({"LDJ", "KFC", "M39"})) {
-        create_swap_chain = true;
+        cache_swap_chain = true;
+        allow_fake_swap_chain = true;
 
     } else if (games::gitadora::is_arena_model() &&
-        (GRAPHICS_PREVENT_SECONDARY_WINDOWS || GRAPHICS_GITADORA_HIDE_SIDE_WINDOWS)) {
+        (GRAPHICS_SCREENSHOT_SUBSCREENS || override_gfdm_swap_chains)) {
+        allow_fake_swap_chain = override_gfdm_swap_chains;
 
         if (pPresentationParameters->BackBufferWidth == 800) {
             // SMALL (subscreen)
-            create_swap_chain = true;
+            cache_swap_chain = true;
             index = 0;
 
         } else if (pPresentationParameters->BackBufferWidth == 1080) {
             // LEFT/RIGHT
-            create_swap_chain = true;
+            cache_swap_chain = true;
             index = 1;
             if (sub_swapchain[index] || fake_sub_swapchain[index]) {
                 index = 2;
@@ -380,7 +396,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3DDevice9::CreateAdditionalSwapChain(
 
     HRESULT hr = pReal->CreateAdditionalSwapChain(pPresentationParameters, ppSwapChain);
 
-    if (create_swap_chain) {
+    if (cache_swap_chain) {
         log_misc(
             "graphics::d3d9",
             "CreateAdditionalSwapChain called for swap chain {}, creating swap chain",
@@ -389,7 +405,10 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3DDevice9::CreateAdditionalSwapChain(
         if (SUCCEEDED(hr) && !sub_swapchain[index]) {
             sub_swapchain[index] = new WrappedIDirect3DSwapChain9(this, *ppSwapChain);
             sub_swapchain[index]->should_run_hooks = false;
-        } else if (FAILED(hr) && !fake_sub_swapchain[index]) {
+            if (games::gitadora::is_arena_model()) {
+                sub_swapchain[index]->AddRef();
+            }
+        } else if (FAILED(hr) && allow_fake_swap_chain && !fake_sub_swapchain[index]) {
             log_warning("graphics::d3d9",
                     "failed to create sub swap chain, hr={}, using fake swap chain",
                     FMT_HRESULT(hr));
@@ -515,12 +534,93 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3DDevice9::GetSwapChain(
     }
 
     HRESULT ret = pReal->GetSwapChain(iSwapChain, ppSwapChain);
-    if (GRAPHICS_LOG_HRESULT && FAILED(ret)) {
-        log_warning("graphics::d3d9", "{} failed, hr={}", __FUNCTION__, FMT_HRESULT(ret));
+    if (FAILED(ret)) {
+        if (GRAPHICS_LOG_HRESULT) {
+            log_warning("graphics::d3d9", "{} failed, hr={}", __FUNCTION__, FMT_HRESULT(ret));
+        }
     } else {
         graphics_screens_register(iSwapChain);
     }
     return ret;
+}
+
+HRESULT WrappedIDirect3DDevice9::get_screenshot_swap_chain(
+        UINT iSwapChain,
+    IDirect3DSwapChain9 **ppSwapChain)
+{
+    if (ppSwapChain == nullptr) {
+        return D3DERR_INVALIDCALL;
+    }
+
+    if (games::gitadora::is_arena_model() && !is_gfdm_two_head_exclusive()) {
+        int index = -1;
+        switch (iSwapChain) {
+            case 1:
+                index = 1;
+                break;
+            case 2:
+                index = 0;
+                break;
+            case 3:
+                index = 2;
+                break;
+        }
+
+        if (index >= 0) {
+            if (sub_swapchain[index] != nullptr) {
+                sub_swapchain[index]->AddRef();
+                *ppSwapChain = sub_swapchain[index];
+                return D3D_OK;
+            }
+            if (fake_sub_swapchain[index] != nullptr) {
+                fake_sub_swapchain[index]->AddRef();
+                *ppSwapChain = fake_sub_swapchain[index];
+                return D3D_OK;
+            }
+        }
+    }
+
+    return GetSwapChain(iSwapChain, ppSwapChain);
+}
+
+void WrappedIDirect3DDevice9::get_screenshot_screens(std::vector<int> &screens) const {
+    if (games::gitadora::is_arena_model()) {
+        screens.push_back(0);
+        if (is_gfdm_two_head_exclusive()) {
+            screens.push_back(gfdm_logical_small_swapchain);
+            return;
+        }
+
+        for (int index = 0; index < 3; index++) {
+            if (gfdm_sub_swapchain_is_visible(index) &&
+                (sub_swapchain[index] != nullptr || fake_sub_swapchain[index] != nullptr)) {
+                screens.push_back(gfdm_screen_for_sub_swapchain(index));
+            }
+        }
+        return;
+    }
+
+    graphics_screens_get(screens);
+    if (std::find(screens.begin(), screens.end(), 0) == screens.end()) {
+        screens.insert(screens.begin(), 0);
+    }
+}
+
+void WrappedIDirect3DDevice9::release_gfdm_cached_swap_chains() {
+    if (!games::gitadora::is_arena_model() || is_gfdm_two_head_exclusive()) {
+        return;
+    }
+
+    for (int index = 0; index < 3; index++) {
+        if (sub_swapchain[index] != nullptr) {
+            sub_swapchain[index]->Release();
+            sub_swapchain[index] = nullptr;
+        }
+        if (fake_sub_swapchain[index] != nullptr) {
+            fake_sub_swapchain[index]->Release();
+            fake_sub_swapchain[index] = nullptr;
+        }
+    }
 }
 
 UINT STDMETHODCALLTYPE WrappedIDirect3DDevice9::GetNumberOfSwapChains() {
@@ -556,6 +656,11 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3DDevice9::Reset(
     // reset overlay
     if (overlay::OVERLAY && overlay::OVERLAY->uses_device(pReal)) {
         overlay::OVERLAY->reset_invalidate();
+    }
+
+    // normal Reset requires additional swap chains to be released
+    if (pPresentationParameters != nullptr) {
+        release_gfdm_cached_swap_chains();
     }
 
     HRESULT res = pReal->Reset(pPresentationParameters);

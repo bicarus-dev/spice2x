@@ -41,7 +41,7 @@
 
 #if D3D9_BACKEND_DEBUG
 #define log_debug(module, format_str, ...) logger::push( \
-    LOG_FORMAT("M", module, format_str, ##__VA_ARGS__), logger::Style::GREY)
+    LOG_FORMAT("M", module, format_str, ## __VA_ARGS__), logger::Style::GREY)
 #else
 #define log_debug(module, format_str, ...)
 #endif
@@ -1478,7 +1478,7 @@ static void graphics_d3d9_ldj_on_present(IDirect3DDevice9 *wrapped_device) {
 void graphics_d3d9_on_present(
         HWND hFocusWindow,
         IDirect3DDevice9 *device,
-        IDirect3DDevice9 *wrapped_device) {
+        WrappedIDirect3DDevice9 *wrapped_device) {
 
     // image resize / orientation swap. run here (the present path) rather than from `EndScene`,
     // which may fire several times per frame on multi-pass / render-to-texture games. this is the
@@ -1497,7 +1497,7 @@ void graphics_d3d9_on_present(
         graphics_d3d9_process_screenshot(wrapped_device);
     }
 
-    // do overlay init as many d3d9 hooks create a dummy instance to get vtable offsets and never
+    // Do overlay init as many d3d9 hooks create a dummy instance to get vtable offsets and never
     // call `Present`. This avoids race conditions on `IDirect3D9::CreateDevice` like with
     // `dx9osd.dll` for pfreepanic.
     if (!overlay::OVERLAY) {

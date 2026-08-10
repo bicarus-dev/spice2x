@@ -1,6 +1,5 @@
 #include "d3d9_screenshot.h"
 
-#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -16,17 +15,15 @@
 #endif
 
 #include "avs/game.h"
-#include "games/io.h"
 #include "hooks/graphics/graphics.h"
-#include "launcher/launcher.h"
 #include "misc/clipboard.h"
-#include "misc/eamuse.h"
 #include "overlay/notifications.h"
-#include "overlay/overlay.h"
 #include "util/fileutils.h"
 #include "util/libutils.h"
 #include "util/logging.h"
 #include "util/threadpool.h"
+
+#include "d3d9_device.h"
 
 #ifdef __GNUC__
 typedef decltype(D3DXSaveSurfaceToFileA) *D3DXSaveSurfaceToFileA_t;
@@ -41,33 +38,42 @@ typedef HRESULT (WINAPI *D3DXSaveSurfaceToFileA_t)(
         CONST RECT *pSrcRect);
 #endif
 
-namespace {
+static bool ATTEMPTED_D3DX9_LOAD_LIBRARY = false;
+static std::mutex SCREENSHOT_SAVE_M;
 
-bool ATTEMPTED_D3DX9_LOAD_LIBRARY = false;
-std::mutex SCREENSHOT_SAVE_M;
+struct SurfaceReleaser {
+    void operator()(IDirect3DSurface9 *surface) const {
+        surface->Release();
+    }
+};
+
+using SurfacePtr = std::unique_ptr<IDirect3DSurface9, SurfaceReleaser>;
 
 struct PendingScreenshotSurface {
     int screen;
     D3DSURFACE_DESC desc;
-    IDirect3DSurface9 *surface;
+    SurfacePtr surface;
 };
 
-// convert copied surface to RGB and enqueue it for API capture
-void save_capture(
+static void save_capture(
         int screen,
         D3DFORMAT format,
         UINT width,
         UINT height,
         IDirect3DSurface9 *surface) {
+    HRESULT hr;
+
+    // lock surface to be able to access the data
     D3DLOCKED_RECT finished_copy {};
-    HRESULT hr = surface->LockRect(&finished_copy, nullptr, 0);
+    hr = surface->LockRect(&finished_copy, nullptr, 0);
     if (FAILED(hr)) {
         log_warning("graphics::d3d9", "failed to lock screenshot surface, hr={}", FMT_HRESULT(hr));
         graphics_capture_skip(screen);
         return;
     }
 
-    const size_t pitch = finished_copy.Pitch;
+    // normalize supported D3D formats to packed RGB for API capture
+    size_t pitch = finished_copy.Pitch;
     auto data = reinterpret_cast<uint8_t *>(finished_copy.pBits);
     auto pixels = std::unique_ptr<uint8_t[]>(new uint8_t[width * height * 3]);
     for (size_t row = 0; row < height; row++) {
@@ -116,6 +122,7 @@ void save_capture(
         }
     }
 
+    // unlock surface
     hr = surface->UnlockRect();
     if (FAILED(hr)) {
         log_warning("graphics::d3d9", "failed to unlock screenshot surface, hr={}", FMT_HRESULT(hr));
@@ -123,11 +130,12 @@ void save_capture(
         return;
     }
 
+    // enqueue
     graphics_capture_enqueue(screen, pixels.release(), width, height);
 }
 
 // save copied surface as PNG and optionally update clipboard and notification
-bool save_screenshot(
+static bool save_screenshot(
         const std::string &file_path,
         D3DFORMAT format,
         UINT width,
@@ -160,10 +168,12 @@ bool save_screenshot(
         }
     }
 
+    // lazy load function
     static D3DXSaveSurfaceToFileA_t D3DXSaveSurfaceToFileA_ptr = nullptr;
     if (D3DXSaveSurfaceToFileA_ptr == nullptr) {
         D3DXSaveSurfaceToFileA_ptr = libutils::try_proc<D3DXSaveSurfaceToFileA_t>("D3DXSaveSurfaceToFileA");
 
+        // check if function was not found, likely because d3dx9 is not loaded
         if (!ATTEMPTED_D3DX9_LOAD_LIBRARY && D3DXSaveSurfaceToFileA_ptr == nullptr) {
             ATTEMPTED_D3DX9_LOAD_LIBRARY = true;
 
@@ -171,14 +181,20 @@ bool save_screenshot(
             for (size_t i = 43; i >= 24; i--) {
                 auto lib_name = fmt::format("d3dx9_{}.dll", i);
                 auto d3dx9 = libutils::try_library(lib_name);
+
+                // Check if library was not found
                 if (d3dx9 == nullptr) {
                     continue;
                 }
 
                 D3DXSaveSurfaceToFileA_ptr = libutils::try_proc<D3DXSaveSurfaceToFileA_t>(
                         d3dx9, "D3DXSaveSurfaceToFileA");
+
+                // Check if function was not found
                 if (D3DXSaveSurfaceToFileA_ptr == nullptr) {
                     FreeLibrary(d3dx9);
+                    d3dx9 = nullptr;
+
                     continue;
                 }
 
@@ -188,35 +204,40 @@ bool save_screenshot(
         }
     }
 
-    if (D3DXSaveSurfaceToFileA_ptr == nullptr) {
+    if (D3DXSaveSurfaceToFileA_ptr != nullptr) {
+
+        // save to file
+        log_info("graphics::d3d9", "saving screenshot to {}", file_path);
+        const HRESULT save_result = D3DXSaveSurfaceToFileA_ptr(
+            file_path.c_str(), D3DXIFF_PNG, surface, nullptr, nullptr);
+
+        if (FAILED(save_result)) {
+            log_warning("graphics::d3d9", "Failed to save screenshot");
+            if (update_ui) {
+                overlay::notifications::add(
+                    overlay::notifications::Severity::Error,
+                    "Screenshot failed to save");
+            }
+            return false;
+        }
+
+        if (update_ui) {
+            // save to clipboard
+            clipboard::copy_image(file_path);
+
+            overlay::notifications::add(
+                overlay::notifications::Severity::Success,
+                fmt::format("Screenshot saved: {}", fileutils::basename(file_path)));
+        }
+        return true;
+    } else {
         log_warning("graphics::d3d9", "Direct3D save helper function not available");
         return false;
     }
-
-    log_info("graphics::d3d9", "saving screenshot to {}", file_path);
-        const HRESULT save_result = D3DXSaveSurfaceToFileA_ptr(
-            file_path.c_str(), D3DXIFF_PNG, surface, nullptr, nullptr);
-        if (FAILED(save_result)) {
-        log_warning("graphics::d3d9", "Failed to save screenshot");
-        if (update_ui) {
-            overlay::notifications::add(
-                overlay::notifications::Severity::Error,
-                "Screenshot failed to save");
-        }
-        return false;
-    }
-
-    if (update_ui) {
-        clipboard::copy_image(file_path);
-        overlay::notifications::add(
-            overlay::notifications::Severity::Success,
-            fmt::format("Screenshot saved: {}", fileutils::basename(file_path)));
-    }
-    return true;
 }
 
 // derive subscreen path without changing the primary filename
-std::string screenshot_path_for_screen(const std::string &primary_path, int screen) {
+static std::string screenshot_path_for_screen(const std::string &primary_path, int screen) {
     if (screen == 0) {
         return primary_path;
     }
@@ -227,12 +248,12 @@ std::string screenshot_path_for_screen(const std::string &primary_path, int scre
 }
 
 // copy logical screen backbuffer into a lockable surface for deferred processing
-bool copy_screenshot_surface(
-        IDirect3DDevice9 *device,
+static bool copy_screenshot_surface(
+        WrappedIDirect3DDevice9 *device,
         int screen,
         PendingScreenshotSurface &pending) {
     IDirect3DSwapChain9 *swap_chain = nullptr;
-    HRESULT hr = device->GetSwapChain(screen, &swap_chain);
+    HRESULT hr = device->get_screenshot_swap_chain(screen, &swap_chain);
     if (FAILED(hr) || swap_chain == nullptr) {
         log_warning("graphics::d3d9",
                 "failed to get swap chain for screen {}, hr={}",
@@ -289,13 +310,13 @@ bool copy_screenshot_surface(
 
     pending.screen = screen;
     pending.desc = desc;
-    pending.surface = temp_surface;
+    pending.surface.reset(temp_surface);
     return true;
 }
 
 // consume pending request, copy surfaces, and dispatch deferred processing
-void process_screenshot_request(
-        IDirect3DDevice9 *device,
+static void process_screenshot_request(
+        WrappedIDirect3DDevice9 *device,
         bool screenshot) {
     const bool capture = !screenshot;
     int capture_screen = 0;
@@ -307,10 +328,7 @@ void process_screenshot_request(
     std::vector<int> screens { capture_screen };
     if (screenshot_subscreens) {
         screens.clear();
-        graphics_screens_get(screens);
-        if (std::find(screens.begin(), screens.end(), 0) == screens.end()) {
-            screens.insert(screens.begin(), 0);
-        }
+        device->get_screenshot_screens(screens);
     }
 
     std::vector<PendingScreenshotSurface> pending_surfaces;
@@ -318,7 +336,7 @@ void process_screenshot_request(
     for (auto screen : screens) {
         PendingScreenshotSurface pending {};
         if (copy_screenshot_surface(device, screen, pending)) {
-            pending_surfaces.emplace_back(pending);
+            pending_surfaces.emplace_back(std::move(pending));
         } else if (capture) {
             graphics_capture_skip(capture_screen);
             return;
@@ -348,7 +366,7 @@ void process_screenshot_request(
                 pending.desc.Format,
                 pending.desc.Width,
                 pending.desc.Height,
-                pending.surface);
+                pending.surface.get());
         }
 
         if (screenshot) {
@@ -365,12 +383,12 @@ void process_screenshot_request(
                     for (const auto &pending : pending_surfaces) {
                         const auto path = screenshot_path_for_screen(screenshot_path, pending.screen);
                         if (save_screenshot(
-                            path,
-                            pending.desc.Format,
-                            pending.desc.Width,
-                            pending.desc.Height,
-                            pending.surface,
-                            false)) {
+                                path,
+                                pending.desc.Format,
+                                pending.desc.Width,
+                                pending.desc.Height,
+                                pending.surface.get(),
+                                false)) {
                             if (pending.screen == 0) {
                                 primary_path = path;
                             }
@@ -408,13 +426,9 @@ void process_screenshot_request(
                             pending.desc.Format,
                             pending.desc.Width,
                             pending.desc.Height,
-                            pending.surface);
+                            pending.surface.get());
                 }
             }
-        }
-
-        for (auto &pending : pending_surfaces) {
-            pending.surface->Release();
         }
     };
 
@@ -433,18 +447,16 @@ void process_screenshot_request(
         surface_process();
     } else {
         static auto pool = ThreadPool(2);
-        pool.add(surface_process);
+        pool.add(std::move(surface_process));
     }
 }
 
-} // namespace
-
 // process pending file screenshot request
-void graphics_d3d9_process_screenshot(IDirect3DDevice9 *device) {
+void graphics_d3d9_process_screenshot(WrappedIDirect3DDevice9 *device) {
     process_screenshot_request(device, true);
 }
 
 // process pending API capture request
-void graphics_d3d9_process_capture(IDirect3DDevice9 *device) {
+void graphics_d3d9_process_capture(WrappedIDirect3DDevice9 *device) {
     process_screenshot_request(device, false);
 }
