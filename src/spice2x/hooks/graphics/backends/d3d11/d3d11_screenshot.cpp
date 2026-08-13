@@ -6,6 +6,11 @@
 
 #ifdef SPICE_D3D11
 
+#include <chrono>
+#include <filesystem>
+#include <mutex>
+#include <string>
+#include <unordered_set>
 #include <vector>
 
 #include <windows.h>
@@ -23,6 +28,44 @@
 using d3d11_hooks::com_ptr;
 
 namespace {
+
+constexpr auto SCREENSHOT_SESSION_LIFETIME = std::chrono::seconds(1);
+
+struct ScreenshotSession {
+    std::unordered_set<IDXGISwapChain *> captured;
+    int next_screen = 1;
+    HWND primary_window = nullptr;
+    std::string primary_path;
+    std::chrono::steady_clock::time_point deadline {};
+};
+
+ScreenshotSession SCREENSHOT_SESSION;
+std::mutex SCREENSHOT_M;
+
+std::string screenshot_path_for_screen(const std::string &primary_path, int screen) {
+    if (screen == 0) {
+        return primary_path;
+    }
+
+    const std::filesystem::path path(primary_path);
+    return (path.parent_path() /
+            fmt::format("{}_{}{}", path.stem().string(), screen, path.extension().string())).string();
+}
+
+bool is_screenshot_subscreen(IDXGISwapChain *swapchain, HWND primary_window) {
+    DXGI_SWAP_CHAIN_DESC desc {};
+    if (FAILED(swapchain->GetDesc(&desc)) || !desc.OutputWindow) {
+        return false;
+    }
+    RECT client_rect {};
+    return desc.OutputWindow != primary_window &&
+        desc.OutputWindow != d3d11_hooks::main_hwnd() &&
+        IsWindowVisible(desc.OutputWindow) &&
+        GetAncestor(desc.OutputWindow, GA_ROOT) == desc.OutputWindow &&
+        GetClientRect(desc.OutputWindow, &client_rect) &&
+        client_rect.right > client_rect.left &&
+        client_rect.bottom > client_rect.top;
+}
 
 // copy the swapchain backbuffer into a CPU-readable staging texture and
 // flatten it into an RGBA8 buffer (BGRA backbuffers are swizzled,
@@ -113,11 +156,42 @@ bool copy_backbuffer_to_rgba(IDXGISwapChain *swapchain,
 namespace d3d11_hooks {
 
 void try_screenshot(IDXGISwapChain *swapchain) {
-    if (!swapchain || !graphics_screenshot_consume()) {
+    const bool primary = swapchain && overlay::OVERLAY &&
+        overlay::OVERLAY->uses_swapchain(swapchain);
+    if (!swapchain || (!primary && !GRAPHICS_SCREENSHOT_SUBSCREENS)) {
         return;
     }
 
-    auto file_path = graphics_screenshot_genpath();
+    std::unique_lock<std::mutex> lock;
+    int screen = 0;
+    std::string file_path;
+    if (primary) {
+        if (!graphics_screenshot_consume()) {
+            return;
+        }
+        file_path = graphics_screenshot_genpath();
+        if (GRAPHICS_SCREENSHOT_SUBSCREENS) {
+            lock = std::unique_lock<std::mutex>(SCREENSHOT_M);
+            SCREENSHOT_SESSION = {};
+            DXGI_SWAP_CHAIN_DESC desc {};
+            if (SUCCEEDED(swapchain->GetDesc(&desc))) {
+                SCREENSHOT_SESSION.primary_window = desc.OutputWindow;
+            }
+        }
+    } else {
+        lock = std::unique_lock<std::mutex>(SCREENSHOT_M);
+        if (SCREENSHOT_SESSION.primary_path.empty() ||
+            std::chrono::steady_clock::now() >= SCREENSHOT_SESSION.deadline ||
+            SCREENSHOT_SESSION.captured.contains(swapchain) ||
+            !is_screenshot_subscreen(swapchain, SCREENSHOT_SESSION.primary_window)) {
+            return;
+        }
+        do {
+            screen = SCREENSHOT_SESSION.next_screen++;
+            file_path = screenshot_path_for_screen(SCREENSHOT_SESSION.primary_path, screen);
+        } while (std::filesystem::exists(file_path));
+    }
+
     if (file_path.empty()) {
         return;
     }
@@ -137,10 +211,12 @@ void try_screenshot(IDXGISwapChain *swapchain) {
     std::vector<uint8_t> pixels;
     uint32_t w = 0, h = 0;
     if (!copy_backbuffer_to_rgba(swapchain, device.get(), context.get(), pixels, w, h)) {
-        log_warning("graphics::d3d11", "screenshot: failed to capture backbuffer");
-        overlay::notifications::add(
-            overlay::notifications::Severity::Error,
-            "Screenshot failed to capture");
+        log_warning("graphics::d3d11", "screenshot: failed to capture screen {} backbuffer", screen);
+        if (primary) {
+            overlay::notifications::add(
+                overlay::notifications::Severity::Error,
+                "Screenshot failed to capture");
+        }
         return;
     }
 
@@ -148,15 +224,26 @@ void try_screenshot(IDXGISwapChain *swapchain) {
     if (stbi_write_png(file_path.c_str(), (int) w, (int) h, 4,
                        pixels.data(), (int) w * 4))
     {
-        clipboard::copy_image(file_path);
-        overlay::notifications::add(
-            overlay::notifications::Severity::Success,
-            fmt::format("Screenshot saved: {}", fileutils::basename(file_path)));
+        if (primary) {
+            clipboard::copy_image(file_path);
+            overlay::notifications::add(
+                overlay::notifications::Severity::Success,
+                fmt::format("Screenshot saved: {}", fileutils::basename(file_path)));
+            if (GRAPHICS_SCREENSHOT_SUBSCREENS) {
+                SCREENSHOT_SESSION.primary_path = file_path;
+                SCREENSHOT_SESSION.deadline =
+                    std::chrono::steady_clock::now() + SCREENSHOT_SESSION_LIFETIME;
+            }
+        } else {
+            SCREENSHOT_SESSION.captured.emplace(swapchain);
+        }
     } else {
-        log_warning("graphics::d3d11", "screenshot: stbi_write_png failed");
-        overlay::notifications::add(
-            overlay::notifications::Severity::Error,
-            "Screenshot failed to save");
+        log_warning("graphics::d3d11", "screenshot: failed to save screen {}", screen);
+        if (primary) {
+            overlay::notifications::add(
+                overlay::notifications::Severity::Error,
+                "Screenshot failed to save");
+        }
     }
 }
 

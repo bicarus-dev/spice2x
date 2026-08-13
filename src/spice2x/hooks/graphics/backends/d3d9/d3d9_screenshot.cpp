@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -41,6 +42,18 @@ typedef HRESULT (WINAPI *D3DXSaveSurfaceToFileA_t)(
 static bool ATTEMPTED_D3DX9_LOAD_LIBRARY = false;
 static std::mutex SCREENSHOT_SAVE_M;
 
+namespace {
+
+enum class ImageRequestKind {
+    Screenshot,
+    Capture,
+};
+
+struct ImageRequest {
+    ImageRequestKind kind;
+    int screen;
+};
+
 struct SurfaceReleaser {
     void operator()(IDirect3DSurface9 *surface) const {
         surface->Release();
@@ -49,11 +62,13 @@ struct SurfaceReleaser {
 
 using SurfacePtr = std::unique_ptr<IDirect3DSurface9, SurfaceReleaser>;
 
-struct PendingScreenshotSurface {
+struct BackbufferCopy {
     int screen;
-    D3DSURFACE_DESC desc;
+    D3DSURFACE_DESC desc {};
     SurfacePtr surface;
 };
+
+} // namespace
 
 static void save_capture(
         int screen,
@@ -248,10 +263,9 @@ static std::string screenshot_path_for_screen(const std::string &primary_path, i
 }
 
 // copy logical screen backbuffer into a lockable surface for deferred processing
-static bool copy_screenshot_surface(
+static std::optional<BackbufferCopy> acquire_backbuffer_copy(
         WrappedIDirect3DDevice9 *device,
-        int screen,
-        PendingScreenshotSurface &pending) {
+    int screen) {
     IDirect3DSwapChain9 *swap_chain = nullptr;
     HRESULT hr = device->get_screenshot_swap_chain(screen, &swap_chain);
     if (FAILED(hr) || swap_chain == nullptr) {
@@ -259,7 +273,7 @@ static bool copy_screenshot_surface(
                 "failed to get swap chain for screen {}, hr={}",
                 screen,
                 FMT_HRESULT(hr));
-        return false;
+            return std::nullopt;
     }
 
     IDirect3DSurface9 *buffer = nullptr;
@@ -270,7 +284,7 @@ static bool copy_screenshot_surface(
                 "failed to get back buffer for screen {}, hr={}",
                 screen,
                 FMT_HRESULT(hr));
-        return false;
+            return std::nullopt;
     }
 
     D3DSURFACE_DESC desc {};
@@ -281,7 +295,7 @@ static bool copy_screenshot_surface(
                 screen,
                 FMT_HRESULT(hr));
         buffer->Release();
-        return false;
+        return std::nullopt;
     }
 
     IDirect3DSurface9 *temp_surface = nullptr;
@@ -294,7 +308,7 @@ static bool copy_screenshot_surface(
                 screen,
                 FMT_HRESULT(hr));
         buffer->Release();
-        return false;
+        return std::nullopt;
     }
 
     hr = device->StretchRect(buffer, nullptr, temp_surface, nullptr, D3DTEXF_NONE);
@@ -305,91 +319,58 @@ static bool copy_screenshot_surface(
                 screen,
                 FMT_HRESULT(hr));
         temp_surface->Release();
-        return false;
+        return std::nullopt;
     }
 
-    pending.screen = screen;
-    pending.desc = desc;
-    pending.surface.reset(temp_surface);
-    return true;
+    return BackbufferCopy {
+        .screen = screen,
+        .desc = desc,
+        .surface = SurfacePtr(temp_surface),
+    };
 }
 
-// consume pending request, copy surfaces, and dispatch deferred processing
-static void process_screenshot_request(
-        WrappedIDirect3DDevice9 *device,
-        bool screenshot) {
-    const bool capture = !screenshot;
-    int capture_screen = 0;
-    if (screenshot ? !graphics_screenshot_consume() : !graphics_capture_consume(&capture_screen)) {
-        return;
-    }
-
-    const bool screenshot_subscreens = screenshot && GRAPHICS_SCREENSHOT_SUBSCREENS;
-    std::vector<int> screens { capture_screen };
-    if (screenshot_subscreens) {
-        screens.clear();
-        device->get_screenshot_screens(screens);
-    }
-
-    std::vector<PendingScreenshotSurface> pending_surfaces;
-    pending_surfaces.reserve(screens.size());
-    for (auto screen : screens) {
-        PendingScreenshotSurface pending {};
-        if (copy_screenshot_surface(device, screen, pending)) {
-            pending_surfaces.emplace_back(std::move(pending));
-        } else if (capture) {
-            graphics_capture_skip(capture_screen);
-            return;
-        }
-    }
-
-    if (pending_surfaces.empty()) {
-        if (screenshot_subscreens) {
-            overlay::notifications::add(
-                overlay::notifications::Severity::Error,
-                "Screenshot failed to capture");
-        }
-        return;
-    }
-
+static void dispatch_surface_save(
+        const ImageRequest &request,
+        bool screenshot_subscreens,
+        std::vector<int> screens,
+        std::vector<BackbufferCopy> copies) {
     auto surface_process = [
-            screenshot,
-            capture,
-            capture_screen,
+            request,
             screenshot_subscreens,
             screens = std::move(screens),
-            pending_surfaces = std::move(pending_surfaces)]() {
-        if (capture) {
-            const auto &pending = pending_surfaces.front();
-            save_capture(
-                capture_screen,
-                pending.desc.Format,
-                pending.desc.Width,
-                pending.desc.Height,
-                pending.surface.get());
-        }
+            copies = std::move(copies)]() {
+        switch (request.kind) {
+            case ImageRequestKind::Capture: {
+                const auto &copy = copies.front();
+                save_capture(
+                        request.screen,
+                        copy.desc.Format,
+                        copy.desc.Width,
+                        copy.desc.Height,
+                        copy.surface.get());
+                break;
+            }
 
-        if (screenshot) {
-            std::lock_guard<std::mutex> lock(SCREENSHOT_SAVE_M);
+            case ImageRequestKind::Screenshot: {
+                std::lock_guard<std::mutex> lock(SCREENSHOT_SAVE_M);
 
-            if (screenshot_subscreens) {
                 const auto screenshot_path = graphics_screenshot_genpath(screens);
                 size_t failed = screenshot_path.empty()
                         ? screens.size()
-                        : screens.size() - pending_surfaces.size();
+                        : screens.size() - copies.size();
                 std::string primary_path;
 
                 if (!screenshot_path.empty()) {
-                    for (const auto &pending : pending_surfaces) {
-                        const auto path = screenshot_path_for_screen(screenshot_path, pending.screen);
+                    for (const auto &copy : copies) {
+                        const auto path = screenshot_path_for_screen(screenshot_path, copy.screen);
                         if (save_screenshot(
                                 path,
-                                pending.desc.Format,
-                                pending.desc.Width,
-                                pending.desc.Height,
-                                pending.surface.get(),
-                                false)) {
-                            if (pending.screen == 0) {
+                                copy.desc.Format,
+                                copy.desc.Width,
+                                copy.desc.Height,
+                                copy.surface.get(),
+                                !screenshot_subscreens)) {
+                            if (copy.screen == 0) {
                                 primary_path = path;
                             }
                         } else {
@@ -398,36 +379,28 @@ static void process_screenshot_request(
                     }
                 }
 
-                if (!primary_path.empty()) {
-                    clipboard::copy_image(primary_path);
-                    overlay::notifications::add(
-                        overlay::notifications::Severity::Success,
-                        fmt::format(
-                            "Screenshot saved: {}",
-                            fileutils::basename(primary_path)));
-                } else {
-                    overlay::notifications::add(
-                        overlay::notifications::Severity::Error,
-                        "Screenshot failed to save");
+                if (screenshot_subscreens) {
+                    if (!primary_path.empty()) {
+                        clipboard::copy_image(primary_path);
+                        overlay::notifications::add(
+                            overlay::notifications::Severity::Success,
+                            fmt::format(
+                                "Screenshot saved: {}",
+                                fileutils::basename(primary_path)));
+                    } else {
+                        overlay::notifications::add(
+                            overlay::notifications::Severity::Error,
+                            "Screenshot failed to save");
+                    }
                 }
 
-                if (failed > 0) {
+                if (screenshot_subscreens && failed > 0) {
                     log_warning(
                         "graphics::d3d9",
                         "failed to capture or save {} screenshot screen(s)",
                         failed);
                 }
-            } else {
-                auto file_path = graphics_screenshot_genpath();
-                if (!file_path.empty()) {
-                    const auto &pending = pending_surfaces.front();
-                    save_screenshot(
-                            file_path,
-                            pending.desc.Format,
-                            pending.desc.Width,
-                            pending.desc.Height,
-                            pending.surface.get());
-                }
+                break;
             }
         }
     };
@@ -451,12 +424,62 @@ static void process_screenshot_request(
     }
 }
 
+static void process_image_request(
+        WrappedIDirect3DDevice9 *device,
+        const ImageRequest &request) {
+    const bool screenshot_subscreens =
+            request.kind == ImageRequestKind::Screenshot && GRAPHICS_SCREENSHOT_SUBSCREENS;
+    std::vector<int> screens { request.screen };
+    if (screenshot_subscreens) {
+        screens.clear();
+        device->get_screenshot_screens(screens);
+    }
+
+    std::vector<BackbufferCopy> copies;
+    copies.reserve(screens.size());
+    for (const auto screen : screens) {
+        auto copy = acquire_backbuffer_copy(device, screen);
+        if (copy.has_value()) {
+            copies.emplace_back(std::move(*copy));
+        } else if (request.kind == ImageRequestKind::Capture) {
+            graphics_capture_skip(request.screen);
+            return;
+        }
+    }
+
+    if (copies.empty()) {
+        if (screenshot_subscreens) {
+            overlay::notifications::add(
+                overlay::notifications::Severity::Error,
+                "Screenshot failed to capture");
+        }
+        return;
+    }
+
+    dispatch_surface_save(
+            request,
+            screenshot_subscreens,
+            std::move(screens),
+            std::move(copies));
+}
+
 // process pending file screenshot request
 void graphics_d3d9_process_screenshot(WrappedIDirect3DDevice9 *device) {
-    process_screenshot_request(device, true);
+    if (graphics_screenshot_consume()) {
+        process_image_request(device, ImageRequest {
+            .kind = ImageRequestKind::Screenshot,
+            .screen = 0,
+        });
+    }
 }
 
 // process pending API capture request
 void graphics_d3d9_process_capture(WrappedIDirect3DDevice9 *device) {
-    process_screenshot_request(device, false);
+    int screen = 0;
+    if (graphics_capture_consume(&screen)) {
+        process_image_request(device, ImageRequest {
+            .kind = ImageRequestKind::Capture,
+            .screen = screen,
+        });
+    }
 }

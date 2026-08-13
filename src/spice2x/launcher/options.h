@@ -152,8 +152,6 @@ namespace launcher {
             LoadMusecaModule,
             PathToModules,
             ScreenshotFolder,
-            ScreenshotSubscreens,
-            ScreenshotIncludeOverlay,
             ConfigurationPath,
             ScreenResizeConfigPath,
             PatchManagerConfigPath,
@@ -322,7 +320,9 @@ namespace launcher {
             OBSWebSocketHost,
             OBSWebSocketPort,
             OBSWebSocketPassword,
-            OBSWebSocketDebug
+            OBSWebSocketDebug,
+            ScreenshotSubscreens,
+            ScreenshotIncludeOverlay
         };
 
         enum class OptionsCategory {

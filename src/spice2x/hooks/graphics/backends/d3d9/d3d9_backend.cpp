@@ -1428,6 +1428,17 @@ IDirect3DSurface9 *graphics_d3d9_ldj_get_sub_screen() {
     return surface;
 }
 
+void graphics_d3d9_release_sub_screen() {
+    if (!games::gitadora::is_arena_model()) {
+        return;
+    }
+    if (SUB_SWAP_CHAIN != nullptr) {
+        SUB_SWAP_CHAIN->Release();
+        SUB_SWAP_CHAIN = nullptr;
+    }
+    ATTEMPTED_SUB_SWAP_CHAIN_ACQUIRE = false;
+}
+
 void graphics_d3d9_notify_subscreen_present() {
     if (SUBSCREEN_FORCE_REDRAW && !SUBSCREEN_FORCE_REDRAW_IN_PROGRESS) {
         SUBSCREEN_PRESENTED_SINCE_LAST_MAIN.store(true, std::memory_order_relaxed);
@@ -1478,7 +1489,9 @@ static void graphics_d3d9_ldj_on_present(IDirect3DDevice9 *wrapped_device) {
 void graphics_d3d9_on_present(
         HWND hFocusWindow,
         IDirect3DDevice9 *device,
-        WrappedIDirect3DDevice9 *wrapped_device) {
+        IDirect3DDevice9 *wrapped_device) {
+
+    auto screenshot_device = static_cast<WrappedIDirect3DDevice9 *>(wrapped_device);
 
     // image resize / orientation swap. run here (the present path) rather than from `EndScene`,
     // which may fire several times per frame on multi-pass / render-to-texture games. this is the
@@ -1494,7 +1507,7 @@ void graphics_d3d9_on_present(
 
     // capture an image before overlay is drawn
     if (!GRAPHICS_SCREENSHOT_INCLUDE_OVERLAY) {
-        graphics_d3d9_process_screenshot(wrapped_device);
+        graphics_d3d9_process_screenshot(screenshot_device);
     }
 
     // Do overlay init as many d3d9 hooks create a dummy instance to get vtable offsets and never
@@ -1518,7 +1531,7 @@ void graphics_d3d9_on_present(
 
     // capture an image after overlay is drawn
     if (GRAPHICS_SCREENSHOT_INCLUDE_OVERLAY) {
-        graphics_d3d9_process_screenshot(wrapped_device);
+        graphics_d3d9_process_screenshot(screenshot_device);
     }
 
     // for IIDX TDJ / SDVX UFC, handle subscreen
@@ -1535,8 +1548,7 @@ void graphics_d3d9_on_present(
         wintouchemu::update();
     }
 
-    // save screenshot
-    graphics_d3d9_process_capture(wrapped_device);
+    graphics_d3d9_process_capture(screenshot_device);
 }
 
 void update_backbuffer_dimensions(D3DPRESENT_PARAMETERS *params) {

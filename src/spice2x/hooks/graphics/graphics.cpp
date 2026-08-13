@@ -5,6 +5,7 @@
 
 #include "graphics.h"
 
+#include <atomic>
 #include <chrono>
 #include <set>
 #include <vector>
@@ -59,7 +60,7 @@ static HICON WINDOW_ICON = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(MA
 static WNDPROC WNDPROC_ORIG = nullptr;
 static WNDPROC WSUB_WNDPROC_ORIG = nullptr;
 static std::vector<WNDPROC> WNDPROC_CUSTOM {};
-static bool GRAPHICS_SCREENSHOT_TRIGGER = false;
+static std::atomic_bool GRAPHICS_SCREENSHOT_TRIGGER { false };
 static std::set<int> GRAPHICS_SCREENS { 0 };
 static std::mutex GRAPHICS_SCREENS_M {};
 static std::vector<int> GRAPHICS_CAPTURE_SCREENS;
@@ -1385,13 +1386,11 @@ void graphics_poll_screenshot_hotkey() {
 }
 
 void graphics_screenshot_trigger() {
-    GRAPHICS_SCREENSHOT_TRIGGER = true;
+    GRAPHICS_SCREENSHOT_TRIGGER.store(true, std::memory_order_relaxed);
 }
 
 bool graphics_screenshot_consume() {
-    auto flag = GRAPHICS_SCREENSHOT_TRIGGER;
-    GRAPHICS_SCREENSHOT_TRIGGER = false;
-    return flag;
+    return GRAPHICS_SCREENSHOT_TRIGGER.exchange(false, std::memory_order_relaxed);
 }
 
 void graphics_capture_trigger(int screen) {
@@ -1530,10 +1529,6 @@ bool graphics_capture_receive_jpeg(int screen, TooJpeg::WRITE_ONE_BYTE receiver,
 
     // clean up
     return success;
-}
-
-std::string graphics_screenshot_genpath() {
-    return graphics_screenshot_genpath(std::vector<int> {});
 }
 
 std::string graphics_screenshot_genpath(const std::vector<int> &screens) {

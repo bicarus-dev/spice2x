@@ -146,12 +146,16 @@ void try_create_overlay(IDXGISwapChain *swapchain) {
     device->Release();
 }
 
-void pump_overlay(IDXGISwapChain *swapchain) {
+void pump_overlay(IDXGISwapChain *swapchain, UINT flags) {
     if (!overlay::OVERLAY || !overlay::OVERLAY->uses_swapchain(swapchain)) {
         return;
     }
 
     graphics_poll_screenshot_hotkey();
+    const bool capture = !(flags & DXGI_PRESENT_TEST);
+    if (capture && !GRAPHICS_SCREENSHOT_INCLUDE_OVERLAY) {
+        d3d11_hooks::try_screenshot(swapchain);
+    }
 
     // size imgui to the backbuffer (not window client). dxgi may upscale
     // a small backbuffer into a larger client rect; without this override
@@ -167,8 +171,16 @@ void pump_overlay(IDXGISwapChain *swapchain) {
     overlay::OVERLAY->new_frame();
     overlay::OVERLAY->render();
 
-    // after overlay render so toasts/menus end up in the saved image.
-    d3d11_hooks::try_screenshot(swapchain);
+    if (capture && GRAPHICS_SCREENSHOT_INCLUDE_OVERLAY) {
+        d3d11_hooks::try_screenshot(swapchain);
+    }
+}
+
+void try_screenshot_subscreen(IDXGISwapChain *swapchain, UINT flags) {
+    if (GRAPHICS_SCREENSHOT_SUBSCREENS && !(flags & DXGI_PRESENT_TEST) &&
+        (!overlay::OVERLAY || !overlay::OVERLAY->uses_swapchain(swapchain))) {
+        d3d11_hooks::try_screenshot(swapchain);
+    }
 }
 
 // ----------------------------------------------------------------------
@@ -178,7 +190,8 @@ HRESULT STDMETHODCALLTYPE Present_hook(
         IDXGISwapChain *swapchain, UINT SyncInterval, UINT Flags)
 {
     try_create_overlay(swapchain);
-    pump_overlay(swapchain);
+    pump_overlay(swapchain, Flags);
+    try_screenshot_subscreen(swapchain, Flags);
     return Present_orig(swapchain, SyncInterval, Flags);
 }
 
@@ -187,7 +200,8 @@ HRESULT STDMETHODCALLTYPE Present1_hook(
         const DXGI_PRESENT_PARAMETERS *pParams)
 {
     try_create_overlay(swapchain);
-    pump_overlay(swapchain);
+    pump_overlay(swapchain, Flags);
+    try_screenshot_subscreen(swapchain, Flags);
     return Present1_orig(swapchain, SyncInterval, Flags, pParams);
 }
 

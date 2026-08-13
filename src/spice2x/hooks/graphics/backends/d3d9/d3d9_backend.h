@@ -9,15 +9,14 @@ static const GUID IID_WrappedIDirect3D9 = {
     0xeee9ccf6, 0x53d6, 0x4326, { 0x9a, 0xe5, 0x60, 0x92, 0x1b, 0x3d, 0xb3, 0x94 }
 };
 
-struct WrappedIDirect3DDevice9;
-
 void graphics_d3d9_init();
 void graphics_d3d9_on_present(
     HWND hFocusWindow,
     IDirect3DDevice9 *device,
-    WrappedIDirect3DDevice9 *wrapped_device);
+    IDirect3DDevice9 *wrapped_device);
 
 void graphics_d3d9_notify_subscreen_present();
+void graphics_d3d9_release_sub_screen();
 
 IDirect3DSurface9 *graphics_d3d9_ldj_get_sub_screen();
 

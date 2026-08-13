@@ -147,8 +147,7 @@ bool graphics_capture_receive_jpeg(int screen, TooJpeg::WRITE_ONE_BYTE receiver,
         bool rgb = true, int quality = 80, bool downsample = true, int divide = 0,
         uint64_t *timestamp = nullptr,
         int *width = nullptr, int *height = nullptr);
-std::string graphics_screenshot_genpath();
-std::string graphics_screenshot_genpath(const std::vector<int> &screens);
+std::string graphics_screenshot_genpath(const std::vector<int> &screens = {});
 
 // graphics_windowed.cpp
 void graphics_windowed_wndproc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);

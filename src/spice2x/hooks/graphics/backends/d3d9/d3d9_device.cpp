@@ -282,17 +282,6 @@ BOOL STDMETHODCALLTYPE WrappedIDirect3DDevice9::ShowCursor(
     return pReal->ShowCursor(bShow);
 }
 
-// GitaDora stores SMALL in slot 0, then LEFT and RIGHT in slots 1 and 2
-static int gfdm_screen_for_sub_swapchain(int index) {
-    static constexpr int screens[] { 2, 1, 3 };
-    return screens[index];
-}
-
-static bool gfdm_sub_swapchain_is_visible(int index) {
-    return !GRAPHICS_PREVENT_SECONDARY_WINDOWS &&
-        (!GRAPHICS_GITADORA_HIDE_SIDE_WINDOWS || index == 0);
-}
-
 HRESULT STDMETHODCALLTYPE WrappedIDirect3DDevice9::CreateAdditionalSwapChain(
         D3DPRESENT_PARAMETERS *pPresentationParameters,
         IDirect3DSwapChain9 **ppSwapChain)
@@ -345,27 +334,28 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3DDevice9::CreateAdditionalSwapChain(
     }
 
     int index = 0;
-    bool cache_swap_chain = false;
+    bool create_swap_chain = false;
     bool allow_fake_swap_chain = false;
     bool create_fake_swap_chain = false;
-    const bool override_gfdm_swap_chains = games::gitadora::is_arena_model() &&
-        (GRAPHICS_PREVENT_SECONDARY_WINDOWS || GRAPHICS_GITADORA_HIDE_SIDE_WINDOWS);
     if (avs::game::is_model({"LDJ", "KFC", "M39"})) {
-        cache_swap_chain = true;
+        create_swap_chain = true;
         allow_fake_swap_chain = true;
 
     } else if (games::gitadora::is_arena_model() &&
-        (GRAPHICS_SCREENSHOT_SUBSCREENS || override_gfdm_swap_chains)) {
-        allow_fake_swap_chain = override_gfdm_swap_chains;
+        (GRAPHICS_SCREENSHOT_SUBSCREENS ||
+         GRAPHICS_PREVENT_SECONDARY_WINDOWS ||
+         GRAPHICS_GITADORA_HIDE_SIDE_WINDOWS)) {
+        allow_fake_swap_chain =
+            GRAPHICS_PREVENT_SECONDARY_WINDOWS || GRAPHICS_GITADORA_HIDE_SIDE_WINDOWS;
 
         if (pPresentationParameters->BackBufferWidth == 800) {
             // SMALL (subscreen)
-            cache_swap_chain = true;
+            create_swap_chain = true;
             index = 0;
 
         } else if (pPresentationParameters->BackBufferWidth == 1080) {
             // LEFT/RIGHT
-            cache_swap_chain = true;
+            create_swap_chain = true;
             index = 1;
             if (sub_swapchain[index] || fake_sub_swapchain[index]) {
                 index = 2;
@@ -396,7 +386,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3DDevice9::CreateAdditionalSwapChain(
 
     HRESULT hr = pReal->CreateAdditionalSwapChain(pPresentationParameters, ppSwapChain);
 
-    if (cache_swap_chain) {
+    if (create_swap_chain) {
         log_misc(
             "graphics::d3d9",
             "CreateAdditionalSwapChain called for swap chain {}, creating swap chain",
@@ -591,16 +581,26 @@ void WrappedIDirect3DDevice9::get_screenshot_screens(std::vector<int> &screens) 
             return;
         }
 
+        // GitaDora stores SMALL in slot 0, then LEFT and RIGHT in slots 1 and 2
+        static constexpr int logical_screens[] { 2, 1, 3 };
         for (int index = 0; index < 3; index++) {
-            if (gfdm_sub_swapchain_is_visible(index) &&
+            if (!GRAPHICS_PREVENT_SECONDARY_WINDOWS &&
+                (!GRAPHICS_GITADORA_HIDE_SIDE_WINDOWS || index == 0) &&
                 (sub_swapchain[index] != nullptr || fake_sub_swapchain[index] != nullptr)) {
-                screens.push_back(gfdm_screen_for_sub_swapchain(index));
+                screens.push_back(logical_screens[index]);
             }
         }
         return;
     }
 
     graphics_screens_get(screens);
+    if (avs::game::is_model({"LDJ", "KFC", "M39"}) &&
+        (sub_swapchain[0] != nullptr ||
+         fake_sub_swapchain[0] != nullptr ||
+         implicit_sub_swapchain != nullptr) &&
+        std::find(screens.begin(), screens.end(), 1) == screens.end()) {
+        screens.push_back(1);
+    }
     if (std::find(screens.begin(), screens.end(), 0) == screens.end()) {
         screens.insert(screens.begin(), 0);
     }
@@ -660,6 +660,7 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3DDevice9::Reset(
 
     // normal Reset requires additional swap chains to be released
     if (pPresentationParameters != nullptr) {
+        graphics_d3d9_release_sub_screen();
         release_gfdm_cached_swap_chains();
     }
 
@@ -2348,6 +2349,12 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3DDevice9::ResetEx(
     // reset overlay
     if (overlay::OVERLAY && overlay::OVERLAY->uses_device(pReal)) {
         overlay::OVERLAY->reset_invalidate();
+    }
+
+    // release cached additional swap chains before ResetEx
+    if (pPresentationParameters != nullptr) {
+        graphics_d3d9_release_sub_screen();
+        release_gfdm_cached_swap_chains();
     }
 
     HRESULT res = static_cast<IDirect3DDevice9Ex *>(pReal)->ResetEx(
