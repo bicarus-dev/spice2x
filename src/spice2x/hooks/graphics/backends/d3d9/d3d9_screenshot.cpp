@@ -32,16 +32,6 @@ static std::mutex SCREENSHOT_SAVE_M;
 
 namespace {
 
-enum class ImageRequestKind {
-    Screenshot,
-    Capture,
-};
-
-struct ImageRequest {
-    ImageRequestKind kind;
-    int screen;
-};
-
 // a screen already read out of its surface, so nothing here touches D3D. the bytes
 // are still in the surface's format; converting them is left to the encode
 struct PendingWrite {
@@ -580,14 +570,12 @@ static void dispatch_screenshot_save(std::vector<PendingWrite> writes, size_t sc
     }
 }
 
-static void process_image_request(
+static void process_screenshot_request(
         IDirect3DDevice9 *device,
-        WrappedIDirect3DDevice9 *wrapped_device,
-        const ImageRequest &request) {
-    const bool screenshot = request.kind == ImageRequestKind::Screenshot;
+        WrappedIDirect3DDevice9 *wrapped_device) {
 
-    std::vector<int> screens { request.screen };
-    if (screenshot && GRAPHICS_SCREENSHOT_SUBSCREENS) {
+    std::vector<int> screens { 0 };
+    if (GRAPHICS_SCREENSHOT_SUBSCREENS) {
         screens.clear();
         wrapped_device->get_screenshot_screens(screens);
     }
@@ -595,8 +583,6 @@ static void process_image_request(
     std::vector<BackbufferCopy> copies;
     copies.reserve(screens.size());
     for (const int screen : screens) {
-        std::optional<BackbufferCopy> copy;
-
         IDirect3DSwapChain9 *swap_chain = nullptr;
         HRESULT hr = wrapped_device->get_screenshot_swap_chain(screen, &swap_chain);
         if (FAILED(hr) || swap_chain == nullptr) {
@@ -604,33 +590,18 @@ static void process_image_request(
                     "failed to get swap chain for screen {}, hr={}",
                     screen,
                     FMT_HRESULT(hr));
-        } else {
-            // only the API capture path runs often enough to benefit from pooling
-            copy = d3d9_readback::acquire_backbuffer_copy(device, swap_chain, screen, !screenshot);
-            swap_chain->Release();
+            continue;
         }
+
+        auto copy = d3d9_readback::acquire_backbuffer_copy(device, swap_chain, screen);
+        swap_chain->Release();
 
         if (copy.has_value()) {
             copies.emplace_back(std::move(*copy));
-        } else if (!screenshot) {
-            graphics_capture_skip(request.screen);
-            return;
         }
     }
 
     if (copies.empty()) {
-        return;
-    }
-
-    if (!screenshot) {
-        PendingCapture capture;
-        if (!read_capture_surface(copies.front(), capture)) {
-            graphics_capture_skip(request.screen);
-            return;
-        }
-
-        copies.clear();
-        dispatch_capture_save(std::move(capture));
         return;
     }
 
@@ -661,21 +632,53 @@ void graphics_d3d9_process_screenshot(
         IDirect3DDevice9 *device,
         WrappedIDirect3DDevice9 *wrapped_device) {
     if (graphics_screenshot_consume()) {
-        process_image_request(device, wrapped_device, ImageRequest {
-            .kind = ImageRequestKind::Screenshot,
-            .screen = 0,
-        });
+        process_screenshot_request(device, wrapped_device);
     }
 }
 
 void graphics_d3d9_process_capture(
         IDirect3DDevice9 *device,
         WrappedIDirect3DDevice9 *wrapped_device) {
+
+    // deliver any previously-submitted frame whose GPU-side copy has finished rendering;
+    // reading it back now never stalls, since the data is already a few frames stale
+    d3d9_readback::poll_capture_ring(device,
+            [](int screen, std::optional<BackbufferCopy> copy) {
+        if (!copy.has_value()) {
+            graphics_capture_skip(screen);
+            return;
+        }
+
+        PendingCapture capture;
+        if (read_capture_surface(*copy, capture)) {
+            dispatch_capture_save(std::move(capture));
+        } else {
+            graphics_capture_skip(screen);
+        }
+    });
+
     int screen = 0;
-    if (graphics_capture_consume(&screen)) {
-        process_image_request(device, wrapped_device, ImageRequest {
-            .kind = ImageRequestKind::Capture,
-            .screen = screen,
-        });
+    if (!graphics_capture_consume(&screen)) {
+        return;
+    }
+
+    IDirect3DSwapChain9 *swap_chain = nullptr;
+    HRESULT hr = wrapped_device->get_screenshot_swap_chain(screen, &swap_chain);
+    if (FAILED(hr) || swap_chain == nullptr) {
+        log_warning("graphics::d3d9",
+                "failed to get swap chain for screen {}, hr={}", screen, FMT_HRESULT(hr));
+        graphics_capture_skip(screen);
+        return;
+    }
+
+    // queues a cheap GPU-side copy and returns immediately - never blocks the render thread
+    // waiting on the GPU the way a direct GetRenderTargetData call would
+    const bool submitted = d3d9_readback::submit_capture(device, swap_chain, screen);
+    swap_chain->Release();
+
+    if (!submitted) {
+        // every ring slot is still waiting on the GPU - streaming can afford to miss this
+        // frame, the game's frame time cannot
+        graphics_capture_skip(screen);
     }
 }

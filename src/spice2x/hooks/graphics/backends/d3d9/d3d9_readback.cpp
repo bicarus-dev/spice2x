@@ -1,5 +1,6 @@
 #include "d3d9_readback.h"
 
+#include <array>
 #include <mutex>
 #include <vector>
 
@@ -160,10 +161,50 @@ ReadbackPool &pool() {
     return *instance;
 }
 
+struct QueryReleaser {
+    void operator()(IDirect3DQuery9 *query) const {
+        query->Release();
+    }
+};
+
+using QueryPtr = std::unique_ptr<IDirect3DQuery9, QueryReleaser>;
+
+// one in-flight GPU-side copy of a captured frame. Read back only once its StretchRect has
+// actually finished, so GetRenderTargetData never has anything left to wait for.
+struct CaptureSlot {
+    SurfacePtr gpu_copy;    // D3DPOOL_DEFAULT, sized/formatted to match desc below
+    QueryPtr fence;
+    D3DSURFACE_DESC desc {};
+    bool pending = false;
+};
+
+// the stream server waits for each frame before requesting the next, so one screen only
+// ever has one capture actually in flight - a couple of spares is slack for the occasional
+// frame where the GPU has not caught up to the previous copy yet
+constexpr size_t CAPTURE_RING_SIZE = 3;
+
+struct CaptureRing {
+    std::array<CaptureSlot, CAPTURE_RING_SIZE> slots;
+    size_t pending_count = 0;
+};
+
+std::array<CaptureRing, GRAPHICS_CAPTURE_SCREEN_NO> CAPTURE_RINGS;
+
 } // namespace
 
 void release_device_resources(IDirect3DDevice9 *device) {
     pool().clear_device(device);
+
+    // the ring's surfaces are D3DPOOL_DEFAULT and cannot survive Reset()/ResetEx(); recreated
+    // lazily on the next submit_capture() either way, so dropping them here is enough
+    for (auto &ring : CAPTURE_RINGS) {
+        for (auto &slot : ring.slots) {
+            slot.gpu_copy.reset();
+            slot.fence.reset();
+            slot.pending = false;
+        }
+        ring.pending_count = 0;
+    }
 }
 
 BackbufferCopy::~BackbufferCopy() {
@@ -173,7 +214,7 @@ BackbufferCopy::~BackbufferCopy() {
 }
 
 std::optional<BackbufferCopy> acquire_backbuffer_copy(
-        IDirect3DDevice9 *device, IDirect3DSwapChain9 *swap_chain, int screen, bool pooled) {
+        IDirect3DDevice9 *device, IDirect3DSwapChain9 *swap_chain, int screen) {
 
     IDirect3DSurface9 *buffer = nullptr;
     HRESULT hr = swap_chain->GetBackBuffer(0, D3DBACKBUFFER_TYPE_MONO, &buffer);
@@ -208,9 +249,7 @@ std::optional<BackbufferCopy> acquire_backbuffer_copy(
         return std::nullopt;
     }
 
-    auto destination = pooled
-            ? pool().acquire(device, desc)
-            : create_readback_surface(device, desc);
+    auto destination = create_readback_surface(device, desc);
     if (!destination) {
         buffer->Release();
         return std::nullopt;
@@ -223,9 +262,6 @@ std::optional<BackbufferCopy> acquire_backbuffer_copy(
         log_warning("graphics::d3d9",
                 "failed to copy back buffer contents, hr={}",
                 FMT_HRESULT(hr));
-        if (pooled) {
-            pool().release(device, std::move(destination));
-        }
         return std::nullopt;
     }
 
@@ -234,8 +270,165 @@ std::optional<BackbufferCopy> acquire_backbuffer_copy(
     copy.desc = desc;
     copy.device = device;
     copy.surface = std::move(destination);
-    copy.pooled = pooled;
+    copy.pooled = false;
 
     return copy;
+}
+
+bool submit_capture(IDirect3DDevice9 *device, IDirect3DSwapChain9 *swap_chain, int screen) {
+    if (screen < 0 || screen >= static_cast<int>(GRAPHICS_CAPTURE_SCREEN_NO)) {
+        return false;
+    }
+
+    auto &ring = CAPTURE_RINGS[screen];
+
+    CaptureSlot *slot = nullptr;
+    for (auto &candidate : ring.slots) {
+        if (!candidate.pending) {
+            slot = &candidate;
+            break;
+        }
+    }
+    if (!slot) {
+        return false;
+    }
+
+    IDirect3DSurface9 *buffer = nullptr;
+    HRESULT hr = swap_chain->GetBackBuffer(0, D3DBACKBUFFER_TYPE_MONO, &buffer);
+    if (FAILED(hr) || buffer == nullptr) {
+        log_warning("graphics::d3d9",
+                "failed to get back buffer for screen {}, hr={}",
+                screen,
+                FMT_HRESULT(hr));
+        return false;
+    }
+
+    D3DSURFACE_DESC desc {};
+    hr = buffer->GetDesc(&desc);
+    if (FAILED(hr)) {
+        log_warning("graphics::d3d9",
+                "failed to acquire back buffer descriptor, hr={}",
+                FMT_HRESULT(hr));
+        buffer->Release();
+        return false;
+    }
+
+    if (desc.MultiSampleType != D3DMULTISAMPLE_NONE) {
+        static std::once_flag warned;
+        std::call_once(warned, [&desc] {
+            log_warning("graphics::d3d9",
+                    "back buffer is multisampled ({}), screenshots and capture are unsupported",
+                    static_cast<uint32_t>(desc.MultiSampleType));
+        });
+        buffer->Release();
+        return false;
+    }
+
+    // recreated whenever the back buffer's size/format changes; safe here since a free slot
+    // can never have a copy still in flight
+    if (!slot->gpu_copy || slot->desc.Width != desc.Width || slot->desc.Height != desc.Height
+            || slot->desc.Format != desc.Format) {
+        IDirect3DSurface9 *target = nullptr;
+        hr = device->CreateRenderTarget(
+                desc.Width, desc.Height, desc.Format, D3DMULTISAMPLE_NONE, 0, FALSE, &target, nullptr);
+        if (FAILED(hr) || target == nullptr) {
+            log_warning("graphics::d3d9",
+                    "failed to create capture ring surface, hr={}", FMT_HRESULT(hr));
+            buffer->Release();
+            return false;
+        }
+        slot->gpu_copy.reset(target);
+    }
+
+    if (!slot->fence) {
+        IDirect3DQuery9 *query = nullptr;
+        hr = device->CreateQuery(D3DQUERYTYPE_EVENT, &query);
+        if (FAILED(hr) || query == nullptr) {
+            log_warning("graphics::d3d9",
+                    "failed to create capture fence, hr={}", FMT_HRESULT(hr));
+            buffer->Release();
+            return false;
+        }
+        slot->fence.reset(query);
+    }
+
+    // GPU-to-GPU: this only ever queues a command, it never waits on anything
+    hr = device->StretchRect(buffer, nullptr, slot->gpu_copy.get(), nullptr, D3DTEXF_NONE);
+    buffer->Release();
+
+    if (FAILED(hr)) {
+        log_warning("graphics::d3d9", "failed to queue capture copy, hr={}", FMT_HRESULT(hr));
+        return false;
+    }
+
+    slot->fence->Issue(D3DISSUE_END);
+    slot->desc = desc;
+    slot->pending = true;
+    ring.pending_count++;
+
+    return true;
+}
+
+void poll_capture_ring(IDirect3DDevice9 *device, const CaptureReadyFn &on_ready) {
+    for (size_t screen = 0; screen < CAPTURE_RINGS.size(); screen++) {
+        auto &ring = CAPTURE_RINGS[screen];
+
+        // an idle screen - nothing ever requested, or nothing outstanding right now - costs
+        // exactly this one comparison: no D3D calls, no locks
+        if (ring.pending_count == 0) {
+            continue;
+        }
+
+        for (auto &slot : ring.slots) {
+            if (!slot.pending) {
+                continue;
+            }
+
+            // D3DGETDATA_FLUSH kicks the command buffer so the query is actually seen by the
+            // GPU; it does not block - S_FALSE just means "still working on it"
+            const HRESULT hr = slot.fence->GetData(nullptr, 0, D3DGETDATA_FLUSH);
+            if (hr == S_FALSE) {
+                continue;
+            }
+
+            slot.pending = false;
+            ring.pending_count--;
+
+            if (FAILED(hr)) {
+                on_ready(static_cast<int>(screen), std::nullopt);
+                continue;
+            }
+
+            // the copy finished rendering frames ago by this point, so unlike the direct
+            // path this GetRenderTargetData has nothing left to wait for
+            auto destination = pool().acquire(device, slot.desc);
+            if (!destination) {
+                on_ready(static_cast<int>(screen), std::nullopt);
+                continue;
+            }
+
+            const HRESULT copy_hr =
+                    device->GetRenderTargetData(slot.gpu_copy.get(), destination.get());
+            if (FAILED(copy_hr)) {
+                log_warning("graphics::d3d9",
+                        "failed to copy capture ring surface, hr={}", FMT_HRESULT(copy_hr));
+                pool().release(device, std::move(destination));
+                on_ready(static_cast<int>(screen), std::nullopt);
+                continue;
+            }
+
+            BackbufferCopy copy;
+            copy.screen = static_cast<int>(screen);
+            copy.desc = slot.desc;
+            copy.device = device;
+            copy.surface = std::move(destination);
+            copy.pooled = true;
+
+            on_ready(static_cast<int>(screen), std::move(copy));
+
+            // only one result per screen per call - matches how often the caller consumes
+            break;
+        }
+    }
 }
 }
