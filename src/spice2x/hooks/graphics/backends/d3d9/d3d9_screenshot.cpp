@@ -770,13 +770,19 @@ void graphics_d3d9_process_capture(
         try_deliver_capture(screen);
     });
 
-    // while a client holds a screen, keep every ring slot full instead of submitting one
-    // capture per request: a single on-demand round trip costs several Present cycles
-    // (GPU queue depth from vsync buffering), measured live at ~20ms - serializing one
-    // request at a time made every delivered frame pay that latency in full. submit_capture
-    // is a no-op once a screen's slots are all in flight, so this naturally self-limits.
+    // while a client holds a screen, re-submit the instant the previous capture is fully
+    // spoken for, rather than waiting for the client to come back and ask for the next one -
+    // that on-demand round trip cost several Present cycles (GPU queue depth from vsync
+    // buffering), measured live at ~20ms, paid serially per delivered frame. deliberately
+    // capped at one in flight, not one per ring slot: each capture is a real StretchRect plus
+    // a real VRAM-to-system-RAM DMA transfer, and letting several run concurrently competes
+    // with the game's own GPU/PCIe usage - measured live, that produced multi-second stalls.
     for (int screen = 0; screen < static_cast<int>(GRAPHICS_CAPTURE_SCREEN_NO); screen++) {
         if (!graphics_capture_continuous_active(screen)) {
+            continue;
+        }
+
+        if (d3d9_readback::has_pending_capture(screen) || CAPTURE_PENDING_LOCKS[screen].copy.has_value()) {
             continue;
         }
 
