@@ -902,9 +902,10 @@ void graphics_d3d9_process_capture(
         }
 
         auto &pending = CAPTURE_PENDING_LOCKS[screen];
-        if (pending.has_value() || CAPTURE_READ_IN_FLIGHT[screen]) {
-            // already working on an older copy for this screen - should not happen given
-            // the submit loop below gates on both, but do not clobber it if it somehow does
+        if (pending.has_value()) {
+            // the previous copy has not been picked up yet. a read already running on a pool
+            // thread is a different frame and does not block this slot, so it is deliberately
+            // not checked here - with more than one capture in flight the two overlap
             graphics_capture_skip(screen);
             return;
         }
@@ -913,21 +914,25 @@ void graphics_d3d9_process_capture(
         try_deliver_capture(screen);
     });
 
-    // while a client holds a screen, keep exactly one capture moving through the ring so a
-    // fresh frame is normally already waiting by the time it's asked for, instead of the
-    // on-demand round trip (several Present cycles of GPU queue depth, measured live at
-    // ~20ms) being paid in full per delivered frame. resubmission only happens once the
-    // previously delivered frame has actually been consumed: a fixed-interval clock here
-    // drifted out of phase with the reader's own independent loop and, once behind, never
-    // caught back up (measured live: capture wait crept back up to ~15ms with the odd
-    // multi-second stall). gating on real consumption keeps production from ever running
-    // more than one frame ahead of demand, which is also what keeps it from firing far more
-    // often than any reader needs - that overrun previously cost the game real frame time.
+    // while a client holds a screen, keep the pipeline primed rather than starting a fresh
+    // round trip per frame - that trip costs several Present cycles of GPU queue depth
+    // (measured ~20ms), so serialising it capped delivery at Present/3, ie 40fps at 120Hz.
+    //
+    // what bounds production is the total frame count in the pipeline, not any one stage:
+    // if the reader stops consuming, the count stays at the cap and submission stops, which
+    // is what keeps production tracking demand. an earlier version gated on each stage
+    // separately, which meant nothing could be submitted until the previous frame had been
+    // fully consumed, exposing the whole pipeline latency once per delivered frame. filling
+    // all three ring slots is the other extreme and was worse than serialising: concurrent
+    // StretchRect + DMA pairs contend with the game's own GPU use and stalled it for seconds.
+    constexpr size_t CAPTURE_MAX_IN_FLIGHT = 2;
+
     for (int screen = 0; screen < static_cast<int>(GRAPHICS_CAPTURE_SCREEN_NO); screen++) {
-        if (d3d9_readback::has_pending_capture(screen)
-                || CAPTURE_PENDING_LOCKS[screen].has_value()
-                || CAPTURE_READ_IN_FLIGHT[screen]
-                || graphics_capture_has_ready_frame(screen)) {
+        const size_t in_flight = d3d9_readback::pending_capture_count(screen)
+                + (CAPTURE_PENDING_LOCKS[screen].has_value() ? 1 : 0)
+                + (CAPTURE_READ_IN_FLIGHT[screen] ? 1 : 0)
+                + (graphics_capture_has_ready_frame(screen) ? 1 : 0);
+        if (in_flight >= CAPTURE_MAX_IN_FLIGHT) {
             continue;
         }
 

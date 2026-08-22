@@ -49,12 +49,11 @@ namespace d3d9_readback {
     // miss a frame here, the game's frame time cannot.
     bool submit_capture(IDirect3DDevice9 *device, IDirect3DSwapChain9 *swap_chain, int screen);
 
-    // true while `screen` has a capture anywhere in the ring (either stage). continuous
-    // callers use this to keep at most one in flight rather than racing to fill every slot -
-    // each one is a real StretchRect plus a real VRAM-to-system-RAM DMA transfer, and three of
-    // those running back to back competes with the game's own GPU/PCIe usage for no benefit,
-    // since nothing consumes completions faster than one at a time anyway.
-    bool has_pending_capture(int screen);
+    // how many captures for `screen` are anywhere in the ring (either stage). continuous
+    // callers bound this rather than filling every slot - each one is a real StretchRect plus
+    // a real VRAM-to-system-RAM DMA transfer, and three of those running back to back
+    // competes with the game's own GPU/PCIe usage badly enough to stall it.
+    size_t pending_capture_count(int screen);
 
     // delivers at most one finished capture per screen per call, reading it back only now
     // that its GPU-side copy has actually finished rendering (so GetRenderTargetData has

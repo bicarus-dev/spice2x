@@ -369,12 +369,12 @@ std::optional<BackbufferCopy> acquire_backbuffer_copy(
     return copy;
 }
 
-bool has_pending_capture(int screen) {
+size_t pending_capture_count(int screen) {
     if (screen < 0 || screen >= static_cast<int>(GRAPHICS_CAPTURE_SCREEN_NO)) {
-        return false;
+        return 0;
     }
 
-    return CAPTURE_RINGS[screen].pending_count > 0;
+    return CAPTURE_RINGS[screen].pending_count;
 }
 
 bool submit_capture(IDirect3DDevice9 *device, IDirect3DSwapChain9 *swap_chain, int screen) {
