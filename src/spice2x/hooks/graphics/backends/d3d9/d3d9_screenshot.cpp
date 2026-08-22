@@ -497,6 +497,12 @@ struct PendingLock {
 
 static std::array<PendingLock, GRAPHICS_CAPTURE_SCREEN_NO> CAPTURE_PENDING_LOCKS;
 
+// continuous capture is paced to the client's own requested fps rather than the main
+// screen's Present rate - letting it resubmit as fast as the ring allowed ran the CPU-side
+// readback (LockRect + memcpy, a few hundred us) up to 120x/sec instead of the ~60x/sec any
+// stream actually consumes, and that extra render-thread work cost the game real frame time
+static std::array<std::chrono::steady_clock::time_point, GRAPHICS_CAPTURE_SCREEN_NO> CAPTURE_NEXT_SUBMIT {};
+
 // tries a non-blocking read of whatever this screen has waiting, whether it just arrived
 // from the ring or is a retry left over from an earlier frame
 static void try_deliver_capture(int screen) {
@@ -786,6 +792,11 @@ void graphics_d3d9_process_capture(
             continue;
         }
 
+        const auto now = std::chrono::steady_clock::now();
+        if (now < CAPTURE_NEXT_SUBMIT[screen]) {
+            continue;
+        }
+
         IDirect3DSwapChain9 *swap_chain = nullptr;
         HRESULT hr = wrapped_device->get_screenshot_swap_chain(screen, &swap_chain);
         if (FAILED(hr) || swap_chain == nullptr) {
@@ -794,7 +805,10 @@ void graphics_d3d9_process_capture(
             continue;
         }
 
-        d3d9_readback::submit_capture(device, swap_chain, screen);
+        if (d3d9_readback::submit_capture(device, swap_chain, screen)) {
+            const int fps = graphics_capture_continuous_target_fps(screen);
+            CAPTURE_NEXT_SUBMIT[screen] = now + std::chrono::microseconds(1000000 / fps);
+        }
         swap_chain->Release();
     }
 }

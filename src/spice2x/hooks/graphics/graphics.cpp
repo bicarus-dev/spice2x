@@ -66,6 +66,7 @@ static bool GRAPHICS_SCREENSHOT_TRIGGER = false;
 static std::set<int> GRAPHICS_SCREENS { 0 };
 static std::mutex GRAPHICS_SCREENS_M {};
 static std::atomic<bool> GRAPHICS_CAPTURE_CONTINUOUS[GRAPHICS_CAPTURE_SCREEN_NO] {};
+static std::atomic<int> GRAPHICS_CAPTURE_TARGET_FPS[GRAPHICS_CAPTURE_SCREEN_NO] {};
 static CaptureData GRAPHICS_CAPTURE_BUFFER[GRAPHICS_CAPTURE_SCREEN_NO] {};
 static std::mutex GRAPHICS_CAPTURE_BUFFER_M[GRAPHICS_CAPTURE_SCREEN_NO] {};
 static std::condition_variable GRAPHICS_CAPTURE_CV[GRAPHICS_CAPTURE_SCREEN_NO] {};
@@ -1428,11 +1429,12 @@ bool graphics_screenshot_consume() {
     return flag;
 }
 
-void graphics_capture_continuous_start(int screen) {
+void graphics_capture_continuous_start(int screen, int fps) {
     if (screen < 0 || screen >= static_cast<int>(GRAPHICS_CAPTURE_SCREEN_NO)) {
         return;
     }
 
+    GRAPHICS_CAPTURE_TARGET_FPS[screen] = fps > 0 ? fps : 60;
     GRAPHICS_CAPTURE_CONTINUOUS[screen] = true;
 }
 
@@ -1450,6 +1452,18 @@ bool graphics_capture_continuous_active(int screen) {
     }
 
     return GRAPHICS_CAPTURE_CONTINUOUS[screen];
+}
+
+// the client's own requested rate, not the main screen's Present rate - pacing capture
+// production to it keeps the render-thread readback (LockRect + memcpy, a few hundred us)
+// from running far more often than any consumer needs, which is what cost the game fps
+// when continuous capture resubmitted as fast as the ring could go
+int graphics_capture_continuous_target_fps(int screen) {
+    if (screen < 0 || screen >= static_cast<int>(GRAPHICS_CAPTURE_SCREEN_NO)) {
+        return 60;
+    }
+
+    return GRAPHICS_CAPTURE_TARGET_FPS[screen];
 }
 
 void graphics_capture_enqueue(int screen, uint8_t *data, size_t width, size_t height) {

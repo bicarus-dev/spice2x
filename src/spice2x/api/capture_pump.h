@@ -18,7 +18,8 @@ namespace api::capture_pump {
     bool capture_direct(int screen, std::shared_ptr<uint8_t[]> &out, int divide,
             uint64_t *timestamp = nullptr, int *width = nullptr, int *height = nullptr);
 
-    // a screen carries one stream at a time; false when another connection already holds it
-    bool claim_screen(int screen);
+    // a screen carries one stream at a time; false when another connection already holds it.
+    // fps is the client's requested rate, used to pace how often the ring is kept fed
+    bool claim_screen(int screen, int fps);
     void release_screen(int screen);
 }
