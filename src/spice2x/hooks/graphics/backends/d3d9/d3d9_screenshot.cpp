@@ -1,5 +1,6 @@
 #include "d3d9_screenshot.h"
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -312,14 +313,23 @@ enum class SurfaceRead {
     Ok,
     Unsupported,
     Failed,
+
+    // D3DLOCK_DONOTWAIT only: GetRenderTargetData's DMA transfer has not landed yet - the
+    // GPU-side render it copies from is done (the capture ring already waited for that),
+    // but the copy into system memory can still be in flight. try again next frame.
+    Busy,
 };
 
 // copying the surface touches D3D, so it stays on the caller's thread. the bytes come
-// out in the surface's own format; converting them is plain memory work for later
+// out in the surface's own format; converting them is plain memory work for later.
+// screenshots can afford to block (allow_wait); the capture path cannot - measured live,
+// blocking here cost 1-3ms per frame (up to 11ms) despite the GPU-side render having
+// finished frames earlier, because the DMA transfer itself was still landing.
 static SurfaceRead read_surface_raw(
         const BackbufferCopy &copy,
         size_t &row_size,
-        std::vector<uint8_t> &out) {
+        std::vector<uint8_t> &out,
+        bool allow_wait) {
 
     const auto bytes_per_pixel = surface_pixel_size(copy.desc.Format);
     if (!bytes_per_pixel.has_value()) {
@@ -337,8 +347,16 @@ static SurfaceRead read_surface_raw(
         return SurfaceRead::Failed;
     }
 
+    DWORD flags = D3DLOCK_READONLY;
+    if (!allow_wait) {
+        flags |= D3DLOCK_DONOTWAIT;
+    }
+
     D3DLOCKED_RECT locked {};
-    HRESULT hr = copy.surface->LockRect(&locked, nullptr, D3DLOCK_READONLY);
+    HRESULT hr = copy.surface->LockRect(&locked, nullptr, flags);
+    if (!allow_wait && hr == D3DERR_WASSTILLDRAWING) {
+        return SurfaceRead::Busy;
+    }
     if (FAILED(hr)) {
         log_warning("graphics::d3d9", "failed to lock capture surface, hr={}", FMT_HRESULT(hr));
         return SurfaceRead::Failed;
@@ -368,7 +386,9 @@ static SurfaceRead read_surface_raw(
     return SurfaceRead::Ok;
 }
 
-static bool read_capture_surface(
+// never blocks (see read_surface_raw): Busy means the DMA transfer has not landed yet and
+// the caller should retry on a later frame rather than treating this as success or failure
+static SurfaceRead read_capture_surface(
         const BackbufferCopy &copy,
         PendingCapture &capture) {
 
@@ -378,17 +398,15 @@ static bool read_capture_surface(
     capture.height = copy.desc.Height;
 
     capture.data = capture_buffers().take();
-    const auto result = read_surface_raw(copy, capture.pitch, capture.data);
+    const auto result = read_surface_raw(copy, capture.pitch, capture.data, /* allow_wait */ false);
     if (result == SurfaceRead::Ok) {
-        return true;
+        return result;
     }
 
     capture_buffers().give(std::move(capture.data));
     capture.data.clear();
 
-    // a format we cannot read is reported as a black frame rather than nothing,
-    // so a client polling the api keeps getting responses
-    return result == SurfaceRead::Unsupported;
+    return result;
 }
 
 static bool write_screenshot_png(
@@ -463,6 +481,55 @@ static void dispatch_capture_save(PendingCapture capture) {
         static auto pool = ThreadPool(2);
         pool.add(std::move(capture_process));
     }
+}
+
+// GetRenderTargetData's DMA transfer can outlive the call that started it (measured live:
+// the call itself returns in a few us, but a blocking LockRect right after it cost
+// 1-3ms, spiking past 11ms), so a capture that is not ready yet waits here instead of on
+// the render thread. a handful of frames is enough slack for the transfer to land, or the
+// stream just misses this one - the game never blocks on it either way.
+constexpr int CAPTURE_LOCK_MAX_ATTEMPTS = 5;
+
+struct PendingLock {
+    std::optional<BackbufferCopy> copy;
+    int attempts = 0;
+};
+
+static std::array<PendingLock, GRAPHICS_CAPTURE_SCREEN_NO> CAPTURE_PENDING_LOCKS;
+
+// tries a non-blocking read of whatever this screen has waiting, whether it just arrived
+// from the ring or is a retry left over from an earlier frame
+static void try_deliver_capture(int screen) {
+    auto &pending = CAPTURE_PENDING_LOCKS[screen];
+    if (!pending.copy.has_value()) {
+        return;
+    }
+
+    const auto started = std::chrono::steady_clock::now();
+    PendingCapture capture;
+    const auto result = read_capture_surface(*pending.copy, capture);
+    record_capture_read(std::chrono::duration<double, std::micro>(
+            std::chrono::steady_clock::now() - started).count());
+
+    if (result == SurfaceRead::Busy) {
+        if (++pending.attempts >= CAPTURE_LOCK_MAX_ATTEMPTS) {
+            pending.copy.reset();
+            pending.attempts = 0;
+            graphics_capture_skip(screen);
+        }
+        return;
+    }
+
+    pending.copy.reset();
+    pending.attempts = 0;
+
+    if (result == SurfaceRead::Failed) {
+        graphics_capture_skip(screen);
+        return;
+    }
+
+    // Ok and Unsupported (reported as a black frame) both dispatch normally
+    dispatch_capture_save(std::move(capture));
 }
 
 // by this point the pixels are plain memory, so none of this needs the device
@@ -649,7 +716,7 @@ static void process_screenshot_request(
         write.width = copy.desc.Width;
         write.height = copy.desc.Height;
 
-        if (read_surface_raw(copy, write.pitch, write.data) != SurfaceRead::Ok) {
+        if (read_surface_raw(copy, write.pitch, write.data, /* allow_wait */ true) != SurfaceRead::Ok) {
             continue;
         }
 
@@ -673,8 +740,15 @@ void graphics_d3d9_process_capture(
         IDirect3DDevice9 *device,
         WrappedIDirect3DDevice9 *wrapped_device) {
 
+    // finish any capture whose DMA transfer had not landed the last time this screen was
+    // checked, before asking the ring whether anything new has shown up
+    for (int screen = 0; screen < static_cast<int>(GRAPHICS_CAPTURE_SCREEN_NO); screen++) {
+        try_deliver_capture(screen);
+    }
+
     // deliver any previously-submitted frame whose GPU-side copy has finished rendering;
-    // reading it back now never stalls, since the data is already a few frames stale
+    // the transfer into system memory this starts may still be in flight, so the actual
+    // read happens through try_deliver_capture, not here
     d3d9_readback::poll_capture_ring(device,
             [](int screen, std::optional<BackbufferCopy> copy) {
         if (!copy.has_value()) {
@@ -682,17 +756,18 @@ void graphics_d3d9_process_capture(
             return;
         }
 
-        const auto started = std::chrono::steady_clock::now();
-        PendingCapture capture;
-        const bool ok = read_capture_surface(*copy, capture);
-        record_capture_read(std::chrono::duration<double, std::micro>(
-                std::chrono::steady_clock::now() - started).count());
-
-        if (ok) {
-            dispatch_capture_save(std::move(capture));
-        } else {
+        auto &pending = CAPTURE_PENDING_LOCKS[screen];
+        if (pending.copy.has_value()) {
+            // already waiting on an older lock for this screen - should not happen given
+            // the ring only ever delivers one result per screen per call, but do not
+            // clobber it if it somehow does
             graphics_capture_skip(screen);
+            return;
         }
+
+        pending.copy = std::move(copy);
+        pending.attempts = 0;
+        try_deliver_capture(screen);
     });
 
     int screen = 0;
