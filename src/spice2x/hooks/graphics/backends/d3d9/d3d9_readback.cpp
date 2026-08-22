@@ -1,6 +1,7 @@
 #include "d3d9_readback.h"
 
 #include <array>
+#include <chrono>
 #include <mutex>
 #include <vector>
 
@@ -190,6 +191,78 @@ struct CaptureRing {
 
 std::array<CaptureRing, GRAPHICS_CAPTURE_SCREEN_NO> CAPTURE_RINGS;
 
+// lightweight timing for the capture path, logged periodically so its actual per-phase
+// cost is measured instead of guessed at. safe to delete once that question is answered.
+struct PhaseStats {
+    double total_us = 0.0;
+    double max_us = 0.0;
+    size_t count = 0;
+
+    void add(double us) {
+        total_us += us;
+        max_us = std::max(max_us, us);
+        count++;
+    }
+
+    double avg_us() const {
+        return count ? total_us / static_cast<double>(count) : 0.0;
+    }
+
+    void reset() {
+        total_us = 0.0;
+        max_us = 0.0;
+        count = 0;
+    }
+};
+
+struct CaptureTimingStats {
+    PhaseStats submit;    // GetBackBuffer + StretchRect + Issue, in submit_capture
+    PhaseStats poll;      // each GetData(..., D3DGETDATA_FLUSH) call, in poll_capture_ring
+    PhaseStats readback;  // GetRenderTargetData once a slot's fence has signalled
+    std::chrono::steady_clock::time_point last_log = std::chrono::steady_clock::now();
+};
+
+CaptureTimingStats CAPTURE_TIMING;
+
+void maybe_log_capture_timing() {
+    const auto now = std::chrono::steady_clock::now();
+    if (now - CAPTURE_TIMING.last_log < std::chrono::seconds(2)) {
+        return;
+    }
+    CAPTURE_TIMING.last_log = now;
+
+    if (CAPTURE_TIMING.submit.count == 0 && CAPTURE_TIMING.poll.count == 0
+            && CAPTURE_TIMING.readback.count == 0) {
+        return;
+    }
+
+    log_info("graphics::d3d9",
+            "capture timing us (avg/max/n): submit {:.0f}/{:.0f}/{}, "
+            "poll {:.0f}/{:.0f}/{}, readback {:.0f}/{:.0f}/{}",
+            CAPTURE_TIMING.submit.avg_us(), CAPTURE_TIMING.submit.max_us, CAPTURE_TIMING.submit.count,
+            CAPTURE_TIMING.poll.avg_us(), CAPTURE_TIMING.poll.max_us, CAPTURE_TIMING.poll.count,
+            CAPTURE_TIMING.readback.avg_us(), CAPTURE_TIMING.readback.max_us, CAPTURE_TIMING.readback.count);
+
+    CAPTURE_TIMING.submit.reset();
+    CAPTURE_TIMING.poll.reset();
+    CAPTURE_TIMING.readback.reset();
+}
+
+class ScopedTimer {
+public:
+    explicit ScopedTimer(PhaseStats &stats)
+        : stats(stats), start(std::chrono::steady_clock::now()) {}
+
+    ~ScopedTimer() {
+        stats.add(std::chrono::duration<double, std::micro>(
+                std::chrono::steady_clock::now() - start).count());
+    }
+
+private:
+    PhaseStats &stats;
+    std::chrono::steady_clock::time_point start;
+};
+
 } // namespace
 
 void release_device_resources(IDirect3DDevice9 *device) {
@@ -293,6 +366,8 @@ bool submit_capture(IDirect3DDevice9 *device, IDirect3DSwapChain9 *swap_chain, i
         return false;
     }
 
+    ScopedTimer timer(CAPTURE_TIMING.submit);
+
     IDirect3DSurface9 *buffer = nullptr;
     HRESULT hr = swap_chain->GetBackBuffer(0, D3DBACKBUFFER_TYPE_MONO, &buffer);
     if (FAILED(hr) || buffer == nullptr) {
@@ -386,7 +461,11 @@ void poll_capture_ring(IDirect3DDevice9 *device, const CaptureReadyFn &on_ready)
 
             // D3DGETDATA_FLUSH kicks the command buffer so the query is actually seen by the
             // GPU; it does not block - S_FALSE just means "still working on it"
-            const HRESULT hr = slot.fence->GetData(nullptr, 0, D3DGETDATA_FLUSH);
+            HRESULT hr;
+            {
+                ScopedTimer timer(CAPTURE_TIMING.poll);
+                hr = slot.fence->GetData(nullptr, 0, D3DGETDATA_FLUSH);
+            }
             if (hr == S_FALSE) {
                 continue;
             }
@@ -407,8 +486,10 @@ void poll_capture_ring(IDirect3DDevice9 *device, const CaptureReadyFn &on_ready)
                 continue;
             }
 
-            const HRESULT copy_hr =
-                    device->GetRenderTargetData(slot.gpu_copy.get(), destination.get());
+            const HRESULT copy_hr = [&] {
+                ScopedTimer timer(CAPTURE_TIMING.readback);
+                return device->GetRenderTargetData(slot.gpu_copy.get(), destination.get());
+            }();
             if (FAILED(copy_hr)) {
                 log_warning("graphics::d3d9",
                         "failed to copy capture ring surface, hr={}", FMT_HRESULT(copy_hr));
@@ -430,5 +511,7 @@ void poll_capture_ring(IDirect3DDevice9 *device, const CaptureReadyFn &on_ready)
             break;
         }
     }
+
+    maybe_log_capture_timing();
 }
 }

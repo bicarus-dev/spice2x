@@ -1,5 +1,6 @@
 #include "d3d9_screenshot.h"
 
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -56,7 +57,6 @@ struct PendingCapture {
 
 // packed 24bpp RGB, what both the png encoder and the api capture consume
 constexpr size_t RGB_PIXEL_SIZE = 3;
-
 // the formats surface_to_rgb knows how to convert; the two must stay in sync
 static std::optional<size_t> surface_pixel_size(D3DFORMAT format) {
     switch (format) {
@@ -110,6 +110,39 @@ static bool resize_pixels(std::vector<uint8_t> &pixels, size_t size) {
         log_warning("graphics::d3d9", "failed to allocate image buffer: {}", error.what());
         return false;
     }
+}
+
+// timing for the CPU-side Lock+memcpy readback of an already-ready capture surface, logged
+// periodically alongside the GPU-side capture timing in d3d9_readback.cpp. safe to delete
+// once that question is answered.
+struct CaptureReadTiming {
+    double total_us = 0.0;
+    double max_us = 0.0;
+    size_t count = 0;
+    std::chrono::steady_clock::time_point last_log = std::chrono::steady_clock::now();
+};
+
+CaptureReadTiming CAPTURE_READ_TIMING;
+
+void record_capture_read(double us) {
+    CAPTURE_READ_TIMING.total_us += us;
+    CAPTURE_READ_TIMING.max_us = std::max(CAPTURE_READ_TIMING.max_us, us);
+    CAPTURE_READ_TIMING.count++;
+
+    const auto now = std::chrono::steady_clock::now();
+    if (now - CAPTURE_READ_TIMING.last_log < std::chrono::seconds(2)) {
+        return;
+    }
+    CAPTURE_READ_TIMING.last_log = now;
+
+    log_info("graphics::d3d9",
+            "capture cpu readback us (avg/max/n): {:.0f}/{:.0f}/{}",
+            CAPTURE_READ_TIMING.total_us / static_cast<double>(CAPTURE_READ_TIMING.count),
+            CAPTURE_READ_TIMING.max_us, CAPTURE_READ_TIMING.count);
+
+    CAPTURE_READ_TIMING.total_us = 0.0;
+    CAPTURE_READ_TIMING.max_us = 0.0;
+    CAPTURE_READ_TIMING.count = 0;
 }
 
 // the api capture stages a whole back buffer every frame, so the staging buffer
@@ -649,8 +682,13 @@ void graphics_d3d9_process_capture(
             return;
         }
 
+        const auto started = std::chrono::steady_clock::now();
         PendingCapture capture;
-        if (read_capture_surface(*copy, capture)) {
+        const bool ok = read_capture_surface(*copy, capture);
+        record_capture_read(std::chrono::duration<double, std::micro>(
+                std::chrono::steady_clock::now() - started).count());
+
+        if (ok) {
             dispatch_capture_save(std::move(capture));
         } else {
             graphics_capture_skip(screen);
