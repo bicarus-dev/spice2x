@@ -150,6 +150,10 @@ void graphics_capture_continuous_start(int screen);
 void graphics_capture_continuous_stop(int screen);
 bool graphics_capture_continuous_active(int screen);
 bool graphics_capture_has_ready_frame(int screen);
+// for callers with no continuous claim (the one-shot api capture module): nothing is
+// feeding that screen's ring on their behalf, so they have to ask for the frame
+void graphics_capture_request_once(int screen);
+bool graphics_capture_request_take(int screen);
 void graphics_capture_enqueue(int screen, uint8_t *data, size_t width, size_t height);
 void graphics_capture_skip(int screen);
 // on success `out` owns packed 24bpp RGB pixels, width * height * 3 bytes

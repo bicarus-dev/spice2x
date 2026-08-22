@@ -66,6 +66,7 @@ static bool GRAPHICS_SCREENSHOT_TRIGGER = false;
 static std::set<int> GRAPHICS_SCREENS { 0 };
 static std::mutex GRAPHICS_SCREENS_M {};
 static std::atomic<bool> GRAPHICS_CAPTURE_CONTINUOUS[GRAPHICS_CAPTURE_SCREEN_NO] {};
+static std::atomic<bool> GRAPHICS_CAPTURE_REQUEST[GRAPHICS_CAPTURE_SCREEN_NO] {};
 static CaptureData GRAPHICS_CAPTURE_BUFFER[GRAPHICS_CAPTURE_SCREEN_NO] {};
 static std::mutex GRAPHICS_CAPTURE_BUFFER_M[GRAPHICS_CAPTURE_SCREEN_NO] {};
 static std::condition_variable GRAPHICS_CAPTURE_CV[GRAPHICS_CAPTURE_SCREEN_NO] {};
@@ -1466,6 +1467,22 @@ bool graphics_capture_has_ready_frame(int screen) {
 
     std::lock_guard<std::mutex> lock(GRAPHICS_CAPTURE_BUFFER_M[screen]);
     return GRAPHICS_CAPTURE_BUFFER[screen].data != nullptr;
+}
+
+void graphics_capture_request_once(int screen) {
+    if (screen < 0 || screen >= static_cast<int>(GRAPHICS_CAPTURE_SCREEN_NO)) {
+        return;
+    }
+
+    GRAPHICS_CAPTURE_REQUEST[screen] = true;
+}
+
+bool graphics_capture_request_take(int screen) {
+    if (screen < 0 || screen >= static_cast<int>(GRAPHICS_CAPTURE_SCREEN_NO)) {
+        return false;
+    }
+
+    return GRAPHICS_CAPTURE_REQUEST[screen].exchange(false);
 }
 
 void graphics_capture_enqueue(int screen, uint8_t *data, size_t width, size_t height) {

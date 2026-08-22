@@ -781,25 +781,32 @@ void graphics_d3d9_process_capture(
     // more than one frame ahead of demand, which is also what keeps it from firing far more
     // often than any reader needs - that overrun previously cost the game real frame time.
     for (int screen = 0; screen < static_cast<int>(GRAPHICS_CAPTURE_SCREEN_NO); screen++) {
-        if (!graphics_capture_continuous_active(screen)) {
-            continue;
-        }
-
         if (d3d9_readback::has_pending_capture(screen)
                 || CAPTURE_PENDING_LOCKS[screen].copy.has_value()
                 || graphics_capture_has_ready_frame(screen)) {
             continue;
         }
 
-        IDirect3DSwapChain9 *swap_chain = nullptr;
-        HRESULT hr = wrapped_device->get_screenshot_swap_chain(screen, &swap_chain);
-        if (FAILED(hr) || swap_chain == nullptr) {
-            // transient at worst (e.g. mode change); nothing waits on this specific
-            // attempt the way a one-shot request would, so just try again next Present
+        const bool continuous = graphics_capture_continuous_active(screen);
+        const bool requested = !continuous && graphics_capture_request_take(screen);
+        if (!continuous && !requested) {
             continue;
         }
 
-        d3d9_readback::submit_capture(device, swap_chain, screen);
+        IDirect3DSwapChain9 *swap_chain = nullptr;
+        HRESULT hr = wrapped_device->get_screenshot_swap_chain(screen, &swap_chain);
+        if (FAILED(hr) || swap_chain == nullptr) {
+            // transient at worst (e.g. mode change); a continuous screen just tries again
+            // next Present, but a one-shot caller is already blocked waiting on this
+            if (requested) {
+                graphics_capture_skip(screen);
+            }
+            continue;
+        }
+
+        if (!d3d9_readback::submit_capture(device, swap_chain, screen) && requested) {
+            graphics_capture_skip(screen);
+        }
         swap_chain->Release();
     }
 }
