@@ -151,6 +151,59 @@ void record_capture_read(double us) {
     CAPTURE_READ_TIMING.count = 0;
 }
 
+// what save_capture costs between the readback finishing and the encoder starting: a fresh
+// multi-megabyte allocation (the staging buffer is pooled, this one is not) and a scalar
+// per-pixel format conversion. neither has ever been measured. safe to delete alongside the
+// rest of the capture timing.
+struct SavePhase {
+    double total_us = 0.0;
+    double max_us = 0.0;
+    size_t count = 0;
+
+    void add(double us) {
+        this->total_us += us;
+        this->max_us = std::max(this->max_us, us);
+        this->count++;
+    }
+
+    double avg_us() const {
+        return this->count ? this->total_us / static_cast<double>(this->count) : 0.0;
+    }
+
+    void reset() {
+        this->total_us = 0.0;
+        this->max_us = 0.0;
+        this->count = 0;
+    }
+};
+
+std::mutex CAPTURE_SAVE_TIMING_M;
+SavePhase CAPTURE_SAVE_ALLOC;
+SavePhase CAPTURE_SAVE_CONVERT;
+std::chrono::steady_clock::time_point CAPTURE_SAVE_LAST_LOG = std::chrono::steady_clock::now();
+
+void record_capture_save(double alloc_us, double convert_us, size_t bytes) {
+    std::lock_guard<std::mutex> lock(CAPTURE_SAVE_TIMING_M);
+
+    CAPTURE_SAVE_ALLOC.add(alloc_us);
+    CAPTURE_SAVE_CONVERT.add(convert_us);
+
+    const auto now = std::chrono::steady_clock::now();
+    if (now - CAPTURE_SAVE_LAST_LOG < std::chrono::seconds(2)) {
+        return;
+    }
+    CAPTURE_SAVE_LAST_LOG = now;
+
+    log_info("graphics::d3d9",
+            "capture save us (avg/max/n): alloc {:.0f}/{:.0f}/{}, convert {:.0f}/{:.0f}/{} ({} KiB)",
+            CAPTURE_SAVE_ALLOC.avg_us(), CAPTURE_SAVE_ALLOC.max_us, CAPTURE_SAVE_ALLOC.count,
+            CAPTURE_SAVE_CONVERT.avg_us(), CAPTURE_SAVE_CONVERT.max_us, CAPTURE_SAVE_CONVERT.count,
+            bytes / 1024);
+
+    CAPTURE_SAVE_ALLOC.reset();
+    CAPTURE_SAVE_CONVERT.reset();
+}
+
 // the api capture stages a whole back buffer every frame, so the staging buffer
 // is recycled rather than reallocated. returned buffers keep their size, which
 // leaves the reuse free of a zero fill
@@ -295,13 +348,19 @@ static void save_capture(PendingCapture capture) {
         return;
     }
 
+    const auto alloc_started = std::chrono::steady_clock::now();
     auto pixels = std::unique_ptr<uint8_t[]>(new (std::nothrow) uint8_t[size->total_size]);
+    const auto alloc_us = std::chrono::duration<double, std::micro>(
+            std::chrono::steady_clock::now() - alloc_started).count();
+
     if (!pixels) {
         log_warning("graphics::d3d9", "failed to allocate capture image buffer");
         capture_buffers().give(std::move(capture.data));
         graphics_capture_skip(capture.screen);
         return;
     }
+
+    const auto convert_started = std::chrono::steady_clock::now();
 
     // a format we cannot read still has to produce a frame, or api clients stall
     if (capture.data.empty()) {
@@ -317,6 +376,9 @@ static void save_capture(PendingCapture capture) {
 
         capture_buffers().give(std::move(capture.data));
     }
+
+    record_capture_save(alloc_us, std::chrono::duration<double, std::micro>(
+            std::chrono::steady_clock::now() - convert_started).count(), size->total_size);
 
     graphics_capture_enqueue(capture.screen, pixels.release(), capture.width, capture.height);
 }
