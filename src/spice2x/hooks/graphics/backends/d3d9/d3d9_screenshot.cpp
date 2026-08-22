@@ -497,12 +497,6 @@ struct PendingLock {
 
 static std::array<PendingLock, GRAPHICS_CAPTURE_SCREEN_NO> CAPTURE_PENDING_LOCKS;
 
-// continuous capture is paced to the client's own requested fps rather than the main
-// screen's Present rate - letting it resubmit as fast as the ring allowed ran the CPU-side
-// readback (LockRect + memcpy, a few hundred us) up to 120x/sec instead of the ~60x/sec any
-// stream actually consumes, and that extra render-thread work cost the game real frame time
-static std::array<std::chrono::steady_clock::time_point, GRAPHICS_CAPTURE_SCREEN_NO> CAPTURE_NEXT_SUBMIT {};
-
 // tries a non-blocking read of whatever this screen has waiting, whether it just arrived
 // from the ring or is a retry left over from an earlier frame
 static void try_deliver_capture(int screen) {
@@ -776,24 +770,24 @@ void graphics_d3d9_process_capture(
         try_deliver_capture(screen);
     });
 
-    // while a client holds a screen, re-submit the instant the previous capture is fully
-    // spoken for, rather than waiting for the client to come back and ask for the next one -
-    // that on-demand round trip cost several Present cycles (GPU queue depth from vsync
-    // buffering), measured live at ~20ms, paid serially per delivered frame. deliberately
-    // capped at one in flight, not one per ring slot: each capture is a real StretchRect plus
-    // a real VRAM-to-system-RAM DMA transfer, and letting several run concurrently competes
-    // with the game's own GPU/PCIe usage - measured live, that produced multi-second stalls.
+    // while a client holds a screen, keep exactly one capture moving through the ring so a
+    // fresh frame is normally already waiting by the time it's asked for, instead of the
+    // on-demand round trip (several Present cycles of GPU queue depth, measured live at
+    // ~20ms) being paid in full per delivered frame. resubmission only happens once the
+    // previously delivered frame has actually been consumed: a fixed-interval clock here
+    // drifted out of phase with the reader's own independent loop and, once behind, never
+    // caught back up (measured live: capture wait crept back up to ~15ms with the odd
+    // multi-second stall). gating on real consumption keeps production from ever running
+    // more than one frame ahead of demand, which is also what keeps it from firing far more
+    // often than any reader needs - that overrun previously cost the game real frame time.
     for (int screen = 0; screen < static_cast<int>(GRAPHICS_CAPTURE_SCREEN_NO); screen++) {
         if (!graphics_capture_continuous_active(screen)) {
             continue;
         }
 
-        if (d3d9_readback::has_pending_capture(screen) || CAPTURE_PENDING_LOCKS[screen].copy.has_value()) {
-            continue;
-        }
-
-        const auto now = std::chrono::steady_clock::now();
-        if (now < CAPTURE_NEXT_SUBMIT[screen]) {
+        if (d3d9_readback::has_pending_capture(screen)
+                || CAPTURE_PENDING_LOCKS[screen].copy.has_value()
+                || graphics_capture_has_ready_frame(screen)) {
             continue;
         }
 
@@ -805,10 +799,7 @@ void graphics_d3d9_process_capture(
             continue;
         }
 
-        if (d3d9_readback::submit_capture(device, swap_chain, screen)) {
-            const int fps = graphics_capture_continuous_target_fps(screen);
-            CAPTURE_NEXT_SUBMIT[screen] = now + std::chrono::microseconds(1000000 / fps);
-        }
+        d3d9_readback::submit_capture(device, swap_chain, screen);
         swap_chain->Release();
     }
 }

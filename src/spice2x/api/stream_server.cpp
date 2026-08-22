@@ -477,7 +477,7 @@ namespace api {
                                 fmt::format("Video stream refused: screen {} not available ({})",
                                         screen, address));
                         send_error(socket, "404 Not Found");
-                    } else if (!capture_pump::claim_screen(screen, fps)) {
+                    } else if (!capture_pump::claim_screen(screen)) {
                         log_warning("api::stream",
                                 "screen {} is already being streamed, refusing {}",
                                 screen, address);

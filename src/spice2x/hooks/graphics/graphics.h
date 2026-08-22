@@ -146,10 +146,10 @@ inline constexpr size_t GRAPHICS_CAPTURE_SCREEN_NO = 4;
 // holds it, rather than one submission per request - a single on-demand round trip through
 // the ring costs several Present cycles (GPU queue depth from vsync buffering), so keeping
 // several in flight overlaps that latency instead of paying it in full per delivered frame
-void graphics_capture_continuous_start(int screen, int fps);
+void graphics_capture_continuous_start(int screen);
 void graphics_capture_continuous_stop(int screen);
 bool graphics_capture_continuous_active(int screen);
-int graphics_capture_continuous_target_fps(int screen);
+bool graphics_capture_has_ready_frame(int screen);
 void graphics_capture_enqueue(int screen, uint8_t *data, size_t width, size_t height);
 void graphics_capture_skip(int screen);
 // on success `out` owns packed 24bpp RGB pixels, width * height * 3 bytes

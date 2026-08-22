@@ -31,7 +31,7 @@ namespace api::capture_pump {
                 screen, out, divide, timestamp, width, height);
     }
 
-    bool claim_screen(int screen, int fps) {
+    bool claim_screen(int screen) {
         if (!valid_screen(screen)) {
             return false;
         }
@@ -43,7 +43,7 @@ namespace api::capture_pump {
         }
 
         CLAIMED[screen] = true;
-        graphics_capture_continuous_start(screen, fps);
+        graphics_capture_continuous_start(screen);
         return true;
     }
 
