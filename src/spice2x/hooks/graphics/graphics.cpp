@@ -1485,11 +1485,11 @@ bool graphics_capture_request_take(int screen) {
     return GRAPHICS_CAPTURE_REQUEST[screen].exchange(false);
 }
 
-void graphics_capture_enqueue(int screen, uint8_t *data, size_t width, size_t height) {
+void graphics_capture_enqueue(int screen, std::shared_ptr<uint8_t[]> data, size_t width, size_t height) {
     GRAPHICS_CAPTURE_BUFFER_M[screen].lock();
     GRAPHICS_CAPTURE_SKIP_SIGNAL[screen] = false;
     auto &capture = GRAPHICS_CAPTURE_BUFFER[screen];
-    capture.data.reset(data);
+    capture.data = std::move(data);
     capture.width = width;
     capture.height = height;
     capture.timestamp = get_performance_milliseconds();

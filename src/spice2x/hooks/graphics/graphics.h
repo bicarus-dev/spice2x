@@ -155,7 +155,7 @@ bool graphics_capture_has_ready_frame(int screen);
 // screen's ring on their behalf, so they have to ask for each frame
 void graphics_capture_request_once(int screen);
 bool graphics_capture_request_take(int screen);
-void graphics_capture_enqueue(int screen, uint8_t *data, size_t width, size_t height);
+void graphics_capture_enqueue(int screen, std::shared_ptr<uint8_t[]> data, size_t width, size_t height);
 void graphics_capture_skip(int screen);
 // on success `out` owns packed 24bpp RGB pixels, width * height * 3 bytes
 bool graphics_capture_receive_raw(int screen, std::shared_ptr<uint8_t[]> &out,

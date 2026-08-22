@@ -243,6 +243,70 @@ CaptureBuffers &capture_buffers() {
     return *instance;
 }
 
+// the RGB frame handed to api clients. its lifetime runs past save_capture - a consumer
+// holds it until it has encoded from it - so it is recycled through a shared_ptr deleter
+// rather than a take/give pair. without this every frame allocates and frees several MB,
+// which on Windows means faulting in fresh pages each time
+class RgbBuffers {
+public:
+    std::shared_ptr<uint8_t[]> take(size_t size) {
+        {
+            std::lock_guard<std::mutex> lock(this->mutex);
+            for (auto it = this->idle.begin(); it != this->idle.end(); ++it) {
+                if (it->size != size) {
+                    continue;
+                }
+
+                auto block = std::move(it->data);
+                this->idle.erase(it);
+                return this->wrap(block.release(), size);
+            }
+        }
+
+        auto fresh = std::unique_ptr<uint8_t[]>(new (std::nothrow) uint8_t[size]);
+        if (!fresh) {
+            return nullptr;
+        }
+
+        return this->wrap(fresh.release(), size);
+    }
+
+private:
+    struct Block {
+        std::unique_ptr<uint8_t[]> data;
+        size_t size {};
+    };
+
+    // one in flight, one being encoded, one spare; a full screen is several MB
+    static constexpr size_t MAX_IDLE = 3;
+
+    std::shared_ptr<uint8_t[]> wrap(uint8_t *raw, size_t size) {
+        return std::shared_ptr<uint8_t[]>(raw, [this, size](uint8_t *done) {
+            this->give(done, size);
+        });
+    }
+
+    void give(uint8_t *raw, size_t size) {
+        std::lock_guard<std::mutex> lock(this->mutex);
+        if (this->idle.size() >= MAX_IDLE) {
+            delete[] raw;
+            return;
+        }
+
+        this->idle.push_back(Block { std::unique_ptr<uint8_t[]>(raw), size });
+    }
+
+    std::mutex mutex;
+    std::vector<Block> idle;
+};
+
+// never destroyed for the same reason as above, and additionally because its deleter
+// outlives any individual frame
+RgbBuffers &rgb_buffers() {
+    static RgbBuffers *instance = new RgbBuffers();
+    return *instance;
+}
+
 // encodes get their own pool: the dispatch below already occupies a worker on its
 // pool, so queueing onto that one and waiting could starve itself. never destroyed
 // for the same reason as the buffers above
@@ -349,7 +413,7 @@ static void save_capture(PendingCapture capture) {
     }
 
     const auto alloc_started = std::chrono::steady_clock::now();
-    auto pixels = std::unique_ptr<uint8_t[]>(new (std::nothrow) uint8_t[size->total_size]);
+    auto pixels = rgb_buffers().take(size->total_size);
     const auto alloc_us = std::chrono::duration<double, std::micro>(
             std::chrono::steady_clock::now() - alloc_started).count();
 
@@ -380,7 +444,7 @@ static void save_capture(PendingCapture capture) {
     record_capture_save(alloc_us, std::chrono::duration<double, std::micro>(
             std::chrono::steady_clock::now() - convert_started).count(), size->total_size);
 
-    graphics_capture_enqueue(capture.screen, pixels.release(), capture.width, capture.height);
+    graphics_capture_enqueue(capture.screen, std::move(pixels), capture.width, capture.height);
 }
 
 enum class SurfaceRead {
