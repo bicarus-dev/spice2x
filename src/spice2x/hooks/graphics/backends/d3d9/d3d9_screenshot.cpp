@@ -193,29 +193,6 @@ ThreadPool &encode_pool() {
     return *instance;
 }
 
-// splits the post-lock pixel copy across a few workers to cut the wall-clock cost on
-// whichever thread is waiting on it (the present thread, for the capture path). every
-// worker only ever touches the already-locked plain memory pointer, never a D3D9 object -
-// LockRect/UnlockRect themselves still run exclusively on the caller's thread, so this
-// cannot hit the concurrent-device-access deadlock a fully off-thread read caused in DDR X2
-ThreadPool &copy_pool() {
-    static auto *instance = new ThreadPool(3);
-    return *instance;
-}
-
-// rows [begin, end) of a locked surface into the matching rows of a plain buffer
-void copy_rows(
-        const uint8_t *locked_data,
-        LONG pitch,
-        uint8_t *out,
-        size_t row_size,
-        size_t begin,
-        size_t end) {
-    for (size_t row = begin; row < end; row++) {
-        std::memcpy(out + row * row_size, locked_data + row * pitch, row_size);
-    }
-}
-
 // normalize the supported D3D formats to packed 24bpp RGB. callers screen the
 // format through surface_pixel_size first, so the black fill below is a fallback
 void surface_to_rgb(
@@ -392,33 +369,11 @@ static SurfaceRead read_surface_raw(
     }
 
     auto data = reinterpret_cast<const uint8_t *>(locked.pBits);
-
-    // this thread does one slice itself rather than handing off all of them, so there is
-    // no point splitting into more pieces than there are threads to run them
-    constexpr size_t COPY_SLICES = 4;
-    const size_t rows = copy.desc.Height;
-    const size_t rows_per_slice = (rows + COPY_SLICES - 1) / COPY_SLICES;
-
-    std::vector<std::future<void>> pending;
-    for (size_t slice = 1; slice < COPY_SLICES; slice++) {
-        const size_t begin = slice * rows_per_slice;
-        if (begin >= rows) {
-            break;
-        }
-        const size_t end = std::min(begin + rows_per_slice, rows);
-
-        try {
-            pending.push_back(copy_pool().add(copy_rows,
-                    data, locked.Pitch, out.data(), size->row_size, begin, end));
-        } catch (const std::exception &) {
-            // nothing to queue onto; copying it here still makes progress
-            copy_rows(data, locked.Pitch, out.data(), size->row_size, begin, end);
-        }
-    }
-    copy_rows(data, locked.Pitch, out.data(), size->row_size, 0, std::min(rows_per_slice, rows));
-
-    for (auto &task : pending) {
-        task.wait();
+    for (size_t row = 0; row < copy.desc.Height; row++) {
+        std::memcpy(
+                out.data() + row * size->row_size,
+                data + row * locked.Pitch,
+                size->row_size);
     }
 
     hr = copy.surface->UnlockRect();
