@@ -170,13 +170,27 @@ struct QueryReleaser {
 
 using QueryPtr = std::unique_ptr<IDirect3DQuery9, QueryReleaser>;
 
-// one in-flight GPU-side copy of a captured frame. Read back only once its StretchRect has
-// actually finished, so GetRenderTargetData never has anything left to wait for.
+// one in-flight copy of a captured frame, moving through two independently-fenced stages:
+// GPU render -> GPU ring surface (StretchRect, fenced by render_fence), then GPU ring
+// surface -> system memory (GetRenderTargetData, fenced by copy_fence). Measured live that
+// GetRenderTargetData returns almost immediately without the DMA transfer actually being
+// done - LockRect blocked on it later regardless of D3DLOCK_DONOTWAIT - so the copy needs
+// its own fence rather than assuming GetRenderTargetData's return means the data has landed.
+enum class SlotStage {
+    Idle,
+    RenderPending,  // waiting on render_fence: has the StretchRect into gpu_copy finished?
+    CopyPending,    // waiting on copy_fence: has GetRenderTargetData's DMA into sysmem_copy landed?
+};
+
 struct CaptureSlot {
     SurfacePtr gpu_copy;    // D3DPOOL_DEFAULT, sized/formatted to match desc below
-    QueryPtr fence;
+    QueryPtr render_fence;
     D3DSURFACE_DESC desc {};
-    bool pending = false;
+
+    SurfacePtr sysmem_copy; // pooled D3DPOOL_SYSTEMMEM, only held between the two stages
+    QueryPtr copy_fence;
+
+    SlotStage stage = SlotStage::Idle;
 };
 
 // the stream server waits for each frame before requesting the next, so one screen only
@@ -216,9 +230,10 @@ struct PhaseStats {
 };
 
 struct CaptureTimingStats {
-    PhaseStats submit;    // GetBackBuffer + StretchRect + Issue, in submit_capture
-    PhaseStats poll;      // each GetData(..., D3DGETDATA_FLUSH) call, in poll_capture_ring
-    PhaseStats readback;  // GetRenderTargetData once a slot's fence has signalled
+    PhaseStats submit;      // GetBackBuffer + StretchRect + Issue, in submit_capture
+    PhaseStats render_poll; // each render_fence GetData call, in poll_capture_ring
+    PhaseStats readback;    // GetRenderTargetData once render_fence has signalled
+    PhaseStats copy_poll;   // each copy_fence GetData call, in poll_capture_ring
     std::chrono::steady_clock::time_point last_log = std::chrono::steady_clock::now();
 };
 
@@ -231,21 +246,23 @@ void maybe_log_capture_timing() {
     }
     CAPTURE_TIMING.last_log = now;
 
-    if (CAPTURE_TIMING.submit.count == 0 && CAPTURE_TIMING.poll.count == 0
-            && CAPTURE_TIMING.readback.count == 0) {
+    if (CAPTURE_TIMING.submit.count == 0 && CAPTURE_TIMING.render_poll.count == 0
+            && CAPTURE_TIMING.readback.count == 0 && CAPTURE_TIMING.copy_poll.count == 0) {
         return;
     }
 
     log_info("graphics::d3d9",
             "capture timing us (avg/max/n): submit {:.0f}/{:.0f}/{}, "
-            "poll {:.0f}/{:.0f}/{}, readback {:.0f}/{:.0f}/{}",
+            "render_poll {:.0f}/{:.0f}/{}, readback {:.0f}/{:.0f}/{}, copy_poll {:.0f}/{:.0f}/{}",
             CAPTURE_TIMING.submit.avg_us(), CAPTURE_TIMING.submit.max_us, CAPTURE_TIMING.submit.count,
-            CAPTURE_TIMING.poll.avg_us(), CAPTURE_TIMING.poll.max_us, CAPTURE_TIMING.poll.count,
-            CAPTURE_TIMING.readback.avg_us(), CAPTURE_TIMING.readback.max_us, CAPTURE_TIMING.readback.count);
+            CAPTURE_TIMING.render_poll.avg_us(), CAPTURE_TIMING.render_poll.max_us, CAPTURE_TIMING.render_poll.count,
+            CAPTURE_TIMING.readback.avg_us(), CAPTURE_TIMING.readback.max_us, CAPTURE_TIMING.readback.count,
+            CAPTURE_TIMING.copy_poll.avg_us(), CAPTURE_TIMING.copy_poll.max_us, CAPTURE_TIMING.copy_poll.count);
 
     CAPTURE_TIMING.submit.reset();
-    CAPTURE_TIMING.poll.reset();
+    CAPTURE_TIMING.render_poll.reset();
     CAPTURE_TIMING.readback.reset();
+    CAPTURE_TIMING.copy_poll.reset();
 }
 
 class ScopedTimer {
@@ -269,12 +286,16 @@ void release_device_resources(IDirect3DDevice9 *device) {
     pool().clear_device(device);
 
     // the ring's surfaces are D3DPOOL_DEFAULT and cannot survive Reset()/ResetEx(); recreated
-    // lazily on the next submit_capture() either way, so dropping them here is enough
+    // lazily on the next submit_capture() either way, so dropping them here is enough. any
+    // sysmem_copy mid-flight is just released directly - the pool itself is being cleared
+    // above regardless, so there is nowhere to return it to.
     for (auto &ring : CAPTURE_RINGS) {
         for (auto &slot : ring.slots) {
             slot.gpu_copy.reset();
-            slot.fence.reset();
-            slot.pending = false;
+            slot.render_fence.reset();
+            slot.sysmem_copy.reset();
+            slot.copy_fence.reset();
+            slot.stage = SlotStage::Idle;
         }
         ring.pending_count = 0;
     }
@@ -357,7 +378,7 @@ bool submit_capture(IDirect3DDevice9 *device, IDirect3DSwapChain9 *swap_chain, i
 
     CaptureSlot *slot = nullptr;
     for (auto &candidate : ring.slots) {
-        if (!candidate.pending) {
+        if (candidate.stage == SlotStage::Idle) {
             slot = &candidate;
             break;
         }
@@ -415,7 +436,7 @@ bool submit_capture(IDirect3DDevice9 *device, IDirect3DSwapChain9 *swap_chain, i
         slot->gpu_copy.reset(target);
     }
 
-    if (!slot->fence) {
+    if (!slot->render_fence) {
         IDirect3DQuery9 *query = nullptr;
         hr = device->CreateQuery(D3DQUERYTYPE_EVENT, &query);
         if (FAILED(hr) || query == nullptr) {
@@ -424,7 +445,7 @@ bool submit_capture(IDirect3DDevice9 *device, IDirect3DSwapChain9 *swap_chain, i
             buffer->Release();
             return false;
         }
-        slot->fence.reset(query);
+        slot->render_fence.reset(query);
     }
 
     // GPU-to-GPU: this only ever queues a command, it never waits on anything
@@ -436,9 +457,9 @@ bool submit_capture(IDirect3DDevice9 *device, IDirect3DSwapChain9 *swap_chain, i
         return false;
     }
 
-    slot->fence->Issue(D3DISSUE_END);
+    slot->render_fence->Issue(D3DISSUE_END);
     slot->desc = desc;
-    slot->pending = true;
+    slot->stage = SlotStage::RenderPending;
     ring.pending_count++;
 
     return true;
@@ -455,33 +476,67 @@ void poll_capture_ring(IDirect3DDevice9 *device, const CaptureReadyFn &on_ready)
         }
 
         for (auto &slot : ring.slots) {
-            if (!slot.pending) {
+            if (slot.stage == SlotStage::CopyPending) {
+                // D3DGETDATA_FLUSH kicks the command buffer so the query is actually seen by
+                // the GPU; it does not block - S_FALSE just means "still working on it"
+                HRESULT hr;
+                {
+                    ScopedTimer timer(CAPTURE_TIMING.copy_poll);
+                    hr = slot.copy_fence->GetData(nullptr, 0, D3DGETDATA_FLUSH);
+                }
+                if (hr == S_FALSE) {
+                    continue;
+                }
+
+                slot.stage = SlotStage::Idle;
+                ring.pending_count--;
+
+                if (FAILED(hr)) {
+                    pool().release(device, std::move(slot.sysmem_copy));
+                    on_ready(static_cast<int>(screen), std::nullopt);
+                    continue;
+                }
+
+                BackbufferCopy copy;
+                copy.screen = static_cast<int>(screen);
+                copy.desc = slot.desc;
+                copy.device = device;
+                copy.surface = std::move(slot.sysmem_copy);
+                copy.pooled = true;
+
+                on_ready(static_cast<int>(screen), std::move(copy));
+
+                // only one result per screen per call - matches how often the caller consumes
+                break;
+            }
+
+            if (slot.stage != SlotStage::RenderPending) {
                 continue;
             }
 
-            // D3DGETDATA_FLUSH kicks the command buffer so the query is actually seen by the
-            // GPU; it does not block - S_FALSE just means "still working on it"
             HRESULT hr;
             {
-                ScopedTimer timer(CAPTURE_TIMING.poll);
-                hr = slot.fence->GetData(nullptr, 0, D3DGETDATA_FLUSH);
+                ScopedTimer timer(CAPTURE_TIMING.render_poll);
+                hr = slot.render_fence->GetData(nullptr, 0, D3DGETDATA_FLUSH);
             }
             if (hr == S_FALSE) {
                 continue;
             }
 
-            slot.pending = false;
-            ring.pending_count--;
-
             if (FAILED(hr)) {
+                slot.stage = SlotStage::Idle;
+                ring.pending_count--;
                 on_ready(static_cast<int>(screen), std::nullopt);
                 continue;
             }
 
-            // the copy finished rendering frames ago by this point, so unlike the direct
-            // path this GetRenderTargetData has nothing left to wait for
+            // the render finished by this point, so unlike a direct GetRenderTargetData
+            // call this one has nothing to wait for on the render side. its own DMA
+            // transfer can still be in flight though - that's what copy_fence is for.
             auto destination = pool().acquire(device, slot.desc);
             if (!destination) {
+                slot.stage = SlotStage::Idle;
+                ring.pending_count--;
                 on_ready(static_cast<int>(screen), std::nullopt);
                 continue;
             }
@@ -494,21 +549,32 @@ void poll_capture_ring(IDirect3DDevice9 *device, const CaptureReadyFn &on_ready)
                 log_warning("graphics::d3d9",
                         "failed to copy capture ring surface, hr={}", FMT_HRESULT(copy_hr));
                 pool().release(device, std::move(destination));
+                slot.stage = SlotStage::Idle;
+                ring.pending_count--;
                 on_ready(static_cast<int>(screen), std::nullopt);
                 continue;
             }
 
-            BackbufferCopy copy;
-            copy.screen = static_cast<int>(screen);
-            copy.desc = slot.desc;
-            copy.device = device;
-            copy.surface = std::move(destination);
-            copy.pooled = true;
+            if (!slot.copy_fence) {
+                IDirect3DQuery9 *query = nullptr;
+                const HRESULT query_hr = device->CreateQuery(D3DQUERYTYPE_EVENT, &query);
+                if (FAILED(query_hr) || query == nullptr) {
+                    log_warning("graphics::d3d9",
+                            "failed to create capture copy fence, hr={}", FMT_HRESULT(query_hr));
+                    pool().release(device, std::move(destination));
+                    slot.stage = SlotStage::Idle;
+                    ring.pending_count--;
+                    on_ready(static_cast<int>(screen), std::nullopt);
+                    continue;
+                }
+                slot.copy_fence.reset(query);
+            }
 
-            on_ready(static_cast<int>(screen), std::move(copy));
-
-            // only one result per screen per call - matches how often the caller consumes
-            break;
+            slot.copy_fence->Issue(D3DISSUE_END);
+            slot.sysmem_copy = std::move(destination);
+            slot.stage = SlotStage::CopyPending;
+            // still pending overall - just moved to the second stage, so pending_count is
+            // deliberately left unchanged here
         }
     }
 
