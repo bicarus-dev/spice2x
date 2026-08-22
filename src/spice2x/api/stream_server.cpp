@@ -49,6 +49,65 @@ namespace api {
             return send_all(socket, text.data(), text.size());
         }
 
+        // the capture path measured fast in isolation; this tracks the same round trip as seen
+        // by a stream client, plus how evenly frames actually land, to tell a slow capture from
+        // a merely uneven one
+        struct StreamDeliveryStats {
+            double capture_us_total = 0;
+            double capture_us_max = 0;
+            int capture_count = 0;
+            int miss_count = 0;
+
+            double interval_us_total = 0;
+            double interval_us_max = 0;
+            int interval_count = 0;
+
+            // writer->write() covers both the encode and the blocking socket send, so a
+            // slow encode (e.g. a periodic H.264 keyframe) and a slow/backed-up reader
+            // look the same here - separate them only if this turns out to matter
+            double write_us_total = 0;
+            double write_us_max = 0;
+            int write_count = 0;
+
+            bool has_last_send = false;
+            std::chrono::steady_clock::time_point last_send;
+            std::chrono::steady_clock::time_point last_log = std::chrono::steady_clock::now();
+        };
+
+        void maybe_log_delivery_stats(StreamDeliveryStats &stats, const std::string &address) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now - stats.last_log < std::chrono::seconds(2)) {
+                return;
+            }
+            stats.last_log = now;
+
+            if (stats.capture_count == 0) {
+                return;
+            }
+
+            log_info("api::stream",
+                    "delivery to {} us (avg/max/n): capture {:.0f}/{:.0f}/{}, "
+                    "interval {:.0f}/{:.0f}/{}, write {:.0f}/{:.0f}/{}, misses {}",
+                    address,
+                    stats.capture_us_total / stats.capture_count, stats.capture_us_max, stats.capture_count,
+                    stats.interval_count ? stats.interval_us_total / stats.interval_count : 0.0,
+                    stats.interval_us_max, stats.interval_count,
+                    stats.write_count ? stats.write_us_total / stats.write_count : 0.0,
+                    stats.write_us_max, stats.write_count,
+                    stats.miss_count);
+
+            stats.capture_us_total = 0;
+            stats.capture_us_max = 0;
+            stats.capture_count = 0;
+            stats.miss_count = 0;
+            stats.interval_us_total = 0;
+            stats.interval_us_max = 0;
+            stats.interval_count = 0;
+            stats.write_us_total = 0;
+            stats.write_us_max = 0;
+            stats.write_count = 0;
+        }
+
         // a viewer leaving is normally noticed by a failing send, so a stream with no frame
         // to push has to ask the socket instead
         bool client_gone(SOCKET socket) {
@@ -465,6 +524,7 @@ namespace api {
 
                         if (send_all(socket, header) && writer->begin(stream_send)) {
                             const auto interval = std::chrono::microseconds(1000000 / fps);
+                            StreamDeliveryStats stats;
 
                             while (this->running) {
                                 const auto started = std::chrono::steady_clock::now();
@@ -474,13 +534,43 @@ namespace api {
                                         screen, frame.pixels, 1,
                                         &frame.timestamp, &frame.width, &frame.height);
 
+                                const auto captured = std::chrono::steady_clock::now();
+                                const double capture_us = std::chrono::duration<double, std::micro>(
+                                        captured - started).count();
+                                stats.capture_us_total += capture_us;
+                                stats.capture_us_max = std::max(stats.capture_us_max, capture_us);
+                                stats.capture_count++;
+
                                 if (ok && frame.pixels) {
-                                    if (!writer->write(stream_send, frame)) {
+                                    const auto write_started = std::chrono::steady_clock::now();
+                                    const bool sent = writer->write(stream_send, frame);
+                                    const double write_us = std::chrono::duration<double, std::micro>(
+                                            std::chrono::steady_clock::now() - write_started).count();
+                                    stats.write_us_total += write_us;
+                                    stats.write_us_max = std::max(stats.write_us_max, write_us);
+                                    stats.write_count++;
+
+                                    if (!sent) {
                                         break;
                                     }
-                                } else if (client_gone(socket)) {
-                                    break;
+
+                                    if (stats.has_last_send) {
+                                        const double interval_us = std::chrono::duration<double, std::micro>(
+                                                captured - stats.last_send).count();
+                                        stats.interval_us_total += interval_us;
+                                        stats.interval_us_max = std::max(stats.interval_us_max, interval_us);
+                                        stats.interval_count++;
+                                    }
+                                    stats.last_send = captured;
+                                    stats.has_last_send = true;
+                                } else {
+                                    stats.miss_count++;
+                                    if (client_gone(socket)) {
+                                        break;
+                                    }
                                 }
+
+                                maybe_log_delivery_stats(stats, address);
 
                                 // a failed capture still paces, or a stalled game spins this
                                 std::this_thread::sleep_until(started + interval);

@@ -142,9 +142,20 @@ bool graphics_screenshot_consume();
 
 inline constexpr size_t GRAPHICS_CAPTURE_SCREEN_NO = 4;
 
-void graphics_capture_trigger(int screen);
-bool graphics_capture_consume(int *screen);
-void graphics_capture_enqueue(int screen, uint8_t *data, size_t width, size_t height);
+// a screen stays fed into the capture ring for as long as a stream client holds it, rather
+// than starting a fresh round trip per request - that round trip costs several Present
+// cycles of GPU queue depth (measured ~20ms), which capped delivery well under the
+// requested rate. one capture is in flight at a time, resubmitted once the last one has
+// actually been consumed, so production tracks demand instead of racing ahead of it
+void graphics_capture_continuous_start(int screen);
+void graphics_capture_continuous_stop(int screen);
+bool graphics_capture_continuous_active(int screen);
+bool graphics_capture_has_ready_frame(int screen);
+// for callers with no continuous claim (the api capture module): nothing is feeding that
+// screen's ring on their behalf, so they have to ask for each frame
+void graphics_capture_request_once(int screen);
+bool graphics_capture_request_take(int screen);
+void graphics_capture_enqueue(int screen, std::shared_ptr<uint8_t[]> data, size_t width, size_t height);
 void graphics_capture_skip(int screen);
 // on success `out` owns packed 24bpp RGB pixels, width * height * 3 bytes
 bool graphics_capture_receive_raw(int screen, std::shared_ptr<uint8_t[]> &out,

@@ -27,7 +27,13 @@ namespace api::capture_pump {
         }
 
         std::lock_guard<std::mutex> lock(CONSUMER_M[screen]);
-        graphics_capture_trigger(screen);
+
+        // a stream client keeps its screen fed; anyone else has to ask, or nothing would
+        // ever produce the frame this call is about to wait for
+        if (!graphics_capture_continuous_active(screen)) {
+            graphics_capture_request_once(screen);
+        }
+
         return graphics_capture_receive_raw(
                 screen, out, divide, timestamp, width, height);
     }
@@ -44,6 +50,7 @@ namespace api::capture_pump {
         }
 
         CLAIMED[screen] = true;
+        graphics_capture_continuous_start(screen);
         return true;
     }
 
@@ -51,6 +58,8 @@ namespace api::capture_pump {
         if (!valid_screen(screen)) {
             return;
         }
+
+        graphics_capture_continuous_stop(screen);
 
         std::lock_guard<std::mutex> lock(CLAIMED_M);
         CLAIMED[screen] = false;

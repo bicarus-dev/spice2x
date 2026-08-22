@@ -634,6 +634,10 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3DDevice9::Reset(
         overlay::OVERLAY->reset_invalidate();
     }
 
+    // the capture ring's surfaces are D3DPOOL_DEFAULT and cannot survive Reset; recreated
+    // lazily on the next capture request either way
+    d3d9_readback::release_device_resources(pReal);
+
     HRESULT res = pReal->Reset(pPresentationParameters);
 
     // recreate overlay
@@ -2320,6 +2324,10 @@ HRESULT STDMETHODCALLTYPE WrappedIDirect3DDevice9::ResetEx(
     if (overlay::OVERLAY && overlay::OVERLAY->uses_device(pReal)) {
         overlay::OVERLAY->reset_invalidate();
     }
+
+    // the capture ring's surfaces are D3DPOOL_DEFAULT and cannot survive ResetEx; recreated
+    // lazily on the next capture request either way
+    d3d9_readback::release_device_resources(pReal);
 
     HRESULT res = static_cast<IDirect3DDevice9Ex *>(pReal)->ResetEx(
             gfdm_parameters.presentation_parameters,

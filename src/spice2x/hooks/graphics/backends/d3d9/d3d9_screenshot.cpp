@@ -1,5 +1,8 @@
 #include "d3d9_screenshot.h"
 
+#include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -32,16 +35,6 @@ static std::mutex SCREENSHOT_SAVE_M;
 
 namespace {
 
-enum class ImageRequestKind {
-    Screenshot,
-    Capture,
-};
-
-struct ImageRequest {
-    ImageRequestKind kind;
-    int screen;
-};
-
 // a screen already read out of its surface, so nothing here touches D3D. the bytes
 // are still in the surface's format; converting them is left to the encode
 struct PendingWrite {
@@ -66,7 +59,6 @@ struct PendingCapture {
 
 // packed 24bpp RGB, what both the png encoder and the api capture consume
 constexpr size_t RGB_PIXEL_SIZE = 3;
-
 // the formats surface_to_rgb knows how to convert; the two must stay in sync
 static std::optional<size_t> surface_pixel_size(D3DFORMAT format) {
     switch (format) {
@@ -122,6 +114,96 @@ static bool resize_pixels(std::vector<uint8_t> &pixels, size_t size) {
     }
 }
 
+// timing for the CPU-side Lock+memcpy readback of an already-ready capture surface, logged
+// periodically alongside the GPU-side capture timing in d3d9_readback.cpp. written from
+// whichever thread did the read, hence the mutex. safe to delete once that question is
+// answered.
+struct CaptureReadTiming {
+    double total_us = 0.0;
+    double max_us = 0.0;
+    size_t count = 0;
+    std::chrono::steady_clock::time_point last_log = std::chrono::steady_clock::now();
+};
+
+std::mutex CAPTURE_READ_TIMING_M;
+CaptureReadTiming CAPTURE_READ_TIMING;
+
+void record_capture_read(double us) {
+    std::lock_guard<std::mutex> lock(CAPTURE_READ_TIMING_M);
+
+    CAPTURE_READ_TIMING.total_us += us;
+    CAPTURE_READ_TIMING.max_us = std::max(CAPTURE_READ_TIMING.max_us, us);
+    CAPTURE_READ_TIMING.count++;
+
+    const auto now = std::chrono::steady_clock::now();
+    if (now - CAPTURE_READ_TIMING.last_log < std::chrono::seconds(2)) {
+        return;
+    }
+    CAPTURE_READ_TIMING.last_log = now;
+
+    log_info("graphics::d3d9",
+            "capture cpu readback us (avg/max/n): {:.0f}/{:.0f}/{}",
+            CAPTURE_READ_TIMING.total_us / static_cast<double>(CAPTURE_READ_TIMING.count),
+            CAPTURE_READ_TIMING.max_us, CAPTURE_READ_TIMING.count);
+
+    CAPTURE_READ_TIMING.total_us = 0.0;
+    CAPTURE_READ_TIMING.max_us = 0.0;
+    CAPTURE_READ_TIMING.count = 0;
+}
+
+// what save_capture costs between the readback finishing and the encoder starting: a fresh
+// multi-megabyte allocation (the staging buffer is pooled, this one is not) and a scalar
+// per-pixel format conversion. neither has ever been measured. safe to delete alongside the
+// rest of the capture timing.
+struct SavePhase {
+    double total_us = 0.0;
+    double max_us = 0.0;
+    size_t count = 0;
+
+    void add(double us) {
+        this->total_us += us;
+        this->max_us = std::max(this->max_us, us);
+        this->count++;
+    }
+
+    double avg_us() const {
+        return this->count ? this->total_us / static_cast<double>(this->count) : 0.0;
+    }
+
+    void reset() {
+        this->total_us = 0.0;
+        this->max_us = 0.0;
+        this->count = 0;
+    }
+};
+
+std::mutex CAPTURE_SAVE_TIMING_M;
+SavePhase CAPTURE_SAVE_ALLOC;
+SavePhase CAPTURE_SAVE_CONVERT;
+std::chrono::steady_clock::time_point CAPTURE_SAVE_LAST_LOG = std::chrono::steady_clock::now();
+
+void record_capture_save(double alloc_us, double convert_us, size_t bytes) {
+    std::lock_guard<std::mutex> lock(CAPTURE_SAVE_TIMING_M);
+
+    CAPTURE_SAVE_ALLOC.add(alloc_us);
+    CAPTURE_SAVE_CONVERT.add(convert_us);
+
+    const auto now = std::chrono::steady_clock::now();
+    if (now - CAPTURE_SAVE_LAST_LOG < std::chrono::seconds(2)) {
+        return;
+    }
+    CAPTURE_SAVE_LAST_LOG = now;
+
+    log_info("graphics::d3d9",
+            "capture save us (avg/max/n): alloc {:.0f}/{:.0f}/{}, convert {:.0f}/{:.0f}/{} ({} KiB)",
+            CAPTURE_SAVE_ALLOC.avg_us(), CAPTURE_SAVE_ALLOC.max_us, CAPTURE_SAVE_ALLOC.count,
+            CAPTURE_SAVE_CONVERT.avg_us(), CAPTURE_SAVE_CONVERT.max_us, CAPTURE_SAVE_CONVERT.count,
+            bytes / 1024);
+
+    CAPTURE_SAVE_ALLOC.reset();
+    CAPTURE_SAVE_CONVERT.reset();
+}
+
 // the api capture stages a whole back buffer every frame, so the staging buffer
 // is recycled rather than reallocated. returned buffers keep their size, which
 // leaves the reuse free of a zero fill
@@ -161,10 +243,81 @@ CaptureBuffers &capture_buffers() {
     return *instance;
 }
 
+// the RGB frame handed to api clients. its lifetime runs past save_capture - a consumer
+// holds it until it has encoded from it - so it is recycled through a shared_ptr deleter
+// rather than a take/give pair. without this every frame allocates and frees several MB,
+// which on Windows means faulting in fresh pages each time
+class RgbBuffers {
+public:
+    std::shared_ptr<uint8_t[]> take(size_t size) {
+        {
+            std::lock_guard<std::mutex> lock(this->mutex);
+            for (auto it = this->idle.begin(); it != this->idle.end(); ++it) {
+                if (it->size != size) {
+                    continue;
+                }
+
+                auto block = std::move(it->data);
+                this->idle.erase(it);
+                return this->wrap(block.release(), size);
+            }
+        }
+
+        auto fresh = std::unique_ptr<uint8_t[]>(new (std::nothrow) uint8_t[size]);
+        if (!fresh) {
+            return nullptr;
+        }
+
+        return this->wrap(fresh.release(), size);
+    }
+
+private:
+    struct Block {
+        std::unique_ptr<uint8_t[]> data;
+        size_t size {};
+    };
+
+    // one in flight, one being encoded, one spare; a full screen is several MB
+    static constexpr size_t MAX_IDLE = 3;
+
+    std::shared_ptr<uint8_t[]> wrap(uint8_t *raw, size_t size) {
+        return std::shared_ptr<uint8_t[]>(raw, [this, size](uint8_t *done) {
+            this->give(done, size);
+        });
+    }
+
+    void give(uint8_t *raw, size_t size) {
+        std::lock_guard<std::mutex> lock(this->mutex);
+        if (this->idle.size() >= MAX_IDLE) {
+            delete[] raw;
+            return;
+        }
+
+        this->idle.push_back(Block { std::unique_ptr<uint8_t[]>(raw), size });
+    }
+
+    std::mutex mutex;
+    std::vector<Block> idle;
+};
+
+// never destroyed for the same reason as above, and additionally because its deleter
+// outlives any individual frame
+RgbBuffers &rgb_buffers() {
+    static RgbBuffers *instance = new RgbBuffers();
+    return *instance;
+}
+
 // encodes get their own pool: the dispatch below already occupies a worker on its
 // pool, so queueing onto that one and waiting could starve itself. never destroyed
 // for the same reason as the buffers above
 ThreadPool &encode_pool() {
+    static auto *instance = new ThreadPool(2);
+    return *instance;
+}
+
+// where the capture surface read runs when it is allowed off the present thread; see
+// try_deliver_capture for when that applies. never destroyed for the same reason as above
+ThreadPool &capture_read_pool() {
     static auto *instance = new ThreadPool(2);
     return *instance;
 }
@@ -259,13 +412,19 @@ static void save_capture(PendingCapture capture) {
         return;
     }
 
-    auto pixels = std::unique_ptr<uint8_t[]>(new (std::nothrow) uint8_t[size->total_size]);
+    const auto alloc_started = std::chrono::steady_clock::now();
+    auto pixels = rgb_buffers().take(size->total_size);
+    const auto alloc_us = std::chrono::duration<double, std::micro>(
+            std::chrono::steady_clock::now() - alloc_started).count();
+
     if (!pixels) {
         log_warning("graphics::d3d9", "failed to allocate capture image buffer");
         capture_buffers().give(std::move(capture.data));
         graphics_capture_skip(capture.screen);
         return;
     }
+
+    const auto convert_started = std::chrono::steady_clock::now();
 
     // a format we cannot read still has to produce a frame, or api clients stall
     if (capture.data.empty()) {
@@ -282,7 +441,10 @@ static void save_capture(PendingCapture capture) {
         capture_buffers().give(std::move(capture.data));
     }
 
-    graphics_capture_enqueue(capture.screen, pixels.release(), capture.width, capture.height);
+    record_capture_save(alloc_us, std::chrono::duration<double, std::micro>(
+            std::chrono::steady_clock::now() - convert_started).count(), size->total_size);
+
+    graphics_capture_enqueue(capture.screen, std::move(pixels), capture.width, capture.height);
 }
 
 enum class SurfaceRead {
@@ -292,7 +454,10 @@ enum class SurfaceRead {
 };
 
 // copying the surface touches D3D, so it stays on the caller's thread. the bytes come
-// out in the surface's own format; converting them is plain memory work for later
+// out in the surface's own format; converting them is plain memory work for later.
+// nothing here waits on the GPU: captures only arrive once the ring's copy fence has
+// signalled that the DMA into this surface landed, and screenshots read a surface the
+// present thread just finished filling.
 static SurfaceRead read_surface_raw(
         const BackbufferCopy &copy,
         size_t &row_size,
@@ -345,7 +510,7 @@ static SurfaceRead read_surface_raw(
     return SurfaceRead::Ok;
 }
 
-static bool read_capture_surface(
+static SurfaceRead read_capture_surface(
         const BackbufferCopy &copy,
         PendingCapture &capture) {
 
@@ -357,15 +522,13 @@ static bool read_capture_surface(
     capture.data = capture_buffers().take();
     const auto result = read_surface_raw(copy, capture.pitch, capture.data);
     if (result == SurfaceRead::Ok) {
-        return true;
+        return result;
     }
 
     capture_buffers().give(std::move(capture.data));
     capture.data.clear();
 
-    // a format we cannot read is reported as a black frame rather than nothing,
-    // so a client polling the api keeps getting responses
-    return result == SurfaceRead::Unsupported;
+    return result;
 }
 
 static bool write_screenshot_png(
@@ -440,6 +603,79 @@ static void dispatch_capture_save(PendingCapture capture) {
         static auto pool = ThreadPool(2);
         pool.add(std::move(capture_process));
     }
+}
+
+// a capture waiting to be read out, one per screen; the ring never delivers a second one
+// for a screen until this is cleared
+static std::array<std::optional<BackbufferCopy>, GRAPHICS_CAPTURE_SCREEN_NO> CAPTURE_PENDING_LOCKS;
+
+// set while a pool thread owns a screen's copy, so the present thread leaves that screen
+// alone until it is done
+static std::atomic<bool> CAPTURE_READ_IN_FLIGHT[GRAPHICS_CAPTURE_SCREEN_NO] {};
+
+// reads the surface and hands the pixels on. the BackbufferCopy dies here too, which
+// returns its surface to the pool - also a device call, so it belongs on whichever thread
+// was cleared to do the read
+static void read_and_dispatch_capture(int screen, BackbufferCopy copy) {
+    const auto started = std::chrono::steady_clock::now();
+    PendingCapture capture;
+    const auto result = read_capture_surface(copy, capture);
+    record_capture_read(std::chrono::duration<double, std::micro>(
+            std::chrono::steady_clock::now() - started).count());
+
+    if (result == SurfaceRead::Failed) {
+        graphics_capture_skip(screen);
+        return;
+    }
+
+    // Ok and Unsupported (reported as a black frame) both dispatch normally
+    dispatch_capture_save(std::move(capture));
+}
+
+// the read only leaves the present thread while a video stream holds the screen. that is
+// the one case where the ~450us it costs per frame actually matters, and it is opt-in by
+// nature - nobody is streaming unless they chose to. everything else keeps the inline path,
+// notably the api capture module, which legacy companion apps poll for video on any game
+// including ones whose device deadlocks under concurrent access (DDR X2, see 8b2f383).
+// games already known to dislike threaded image processing are excluded outright.
+static void try_deliver_capture(int screen) {
+    if (CAPTURE_READ_IN_FLIGHT[screen]) {
+        return;
+    }
+
+    auto &pending = CAPTURE_PENDING_LOCKS[screen];
+    if (!pending.has_value()) {
+        return;
+    }
+
+    auto copy = std::move(*pending);
+    pending.reset();
+
+    if (graphics_capture_continuous_active(screen) && !image_processing_must_be_inline()) {
+        CAPTURE_READ_IN_FLIGHT[screen] = true;
+
+        try {
+            capture_read_pool().add([screen, copy = std::move(copy)]() mutable {
+                // an escape from here would cross a thread boundary and terminate
+                try {
+                    read_and_dispatch_capture(screen, std::move(copy));
+                } catch (const std::exception &error) {
+                    log_warning("graphics::d3d9", "capture read failed: {}", error.what());
+                    graphics_capture_skip(screen);
+                } catch (...) {
+                    log_warning("graphics::d3d9", "capture read failed");
+                    graphics_capture_skip(screen);
+                }
+                CAPTURE_READ_IN_FLIGHT[screen] = false;
+            });
+            return;
+        } catch (const std::exception &) {
+            // nothing to queue onto; reading it here still makes progress
+            CAPTURE_READ_IN_FLIGHT[screen] = false;
+        }
+    }
+
+    read_and_dispatch_capture(screen, std::move(copy));
 }
 
 // by this point the pixels are plain memory, so none of this needs the device
@@ -580,14 +816,12 @@ static void dispatch_screenshot_save(std::vector<PendingWrite> writes, size_t sc
     }
 }
 
-static void process_image_request(
+static void process_screenshot_request(
         IDirect3DDevice9 *device,
-        WrappedIDirect3DDevice9 *wrapped_device,
-        const ImageRequest &request) {
-    const bool screenshot = request.kind == ImageRequestKind::Screenshot;
+        WrappedIDirect3DDevice9 *wrapped_device) {
 
-    std::vector<int> screens { request.screen };
-    if (screenshot && GRAPHICS_SCREENSHOT_SUBSCREENS) {
+    std::vector<int> screens { 0 };
+    if (GRAPHICS_SCREENSHOT_SUBSCREENS) {
         screens.clear();
         wrapped_device->get_screenshot_screens(screens);
     }
@@ -595,8 +829,6 @@ static void process_image_request(
     std::vector<BackbufferCopy> copies;
     copies.reserve(screens.size());
     for (const int screen : screens) {
-        std::optional<BackbufferCopy> copy;
-
         IDirect3DSwapChain9 *swap_chain = nullptr;
         HRESULT hr = wrapped_device->get_screenshot_swap_chain(screen, &swap_chain);
         if (FAILED(hr) || swap_chain == nullptr) {
@@ -604,33 +836,18 @@ static void process_image_request(
                     "failed to get swap chain for screen {}, hr={}",
                     screen,
                     FMT_HRESULT(hr));
-        } else {
-            // only the API capture path runs often enough to benefit from pooling
-            copy = d3d9_readback::acquire_backbuffer_copy(device, swap_chain, screen, !screenshot);
-            swap_chain->Release();
+            continue;
         }
+
+        auto copy = d3d9_readback::acquire_backbuffer_copy(device, swap_chain, screen);
+        swap_chain->Release();
 
         if (copy.has_value()) {
             copies.emplace_back(std::move(*copy));
-        } else if (!screenshot) {
-            graphics_capture_skip(request.screen);
-            return;
         }
     }
 
     if (copies.empty()) {
-        return;
-    }
-
-    if (!screenshot) {
-        PendingCapture capture;
-        if (!read_capture_surface(copies.front(), capture)) {
-            graphics_capture_skip(request.screen);
-            return;
-        }
-
-        copies.clear();
-        dispatch_capture_save(std::move(capture));
         return;
     }
 
@@ -661,21 +878,84 @@ void graphics_d3d9_process_screenshot(
         IDirect3DDevice9 *device,
         WrappedIDirect3DDevice9 *wrapped_device) {
     if (graphics_screenshot_consume()) {
-        process_image_request(device, wrapped_device, ImageRequest {
-            .kind = ImageRequestKind::Screenshot,
-            .screen = 0,
-        });
+        process_screenshot_request(device, wrapped_device);
     }
 }
 
 void graphics_d3d9_process_capture(
         IDirect3DDevice9 *device,
         WrappedIDirect3DDevice9 *wrapped_device) {
-    int screen = 0;
-    if (graphics_capture_consume(&screen)) {
-        process_image_request(device, wrapped_device, ImageRequest {
-            .kind = ImageRequestKind::Capture,
-            .screen = screen,
-        });
+
+    // hand any capture left over from an earlier Present to whichever thread is allowed to
+    // read it, before asking the ring whether anything new has shown up
+    for (int screen = 0; screen < static_cast<int>(GRAPHICS_CAPTURE_SCREEN_NO); screen++) {
+        try_deliver_capture(screen);
+    }
+
+    // pick up any submitted frame the ring has finished with; reading the pixels out of it
+    // is try_deliver_capture's job, not this callback's
+    d3d9_readback::poll_capture_ring(device,
+            [](int screen, std::optional<BackbufferCopy> copy) {
+        if (!copy.has_value()) {
+            graphics_capture_skip(screen);
+            return;
+        }
+
+        auto &pending = CAPTURE_PENDING_LOCKS[screen];
+        if (pending.has_value()) {
+            // the previous copy has not been picked up yet. a read already running on a pool
+            // thread is a different frame and does not block this slot, so it is deliberately
+            // not checked here - with more than one capture in flight the two overlap
+            graphics_capture_skip(screen);
+            return;
+        }
+
+        pending = std::move(copy);
+        try_deliver_capture(screen);
+    });
+
+    // while a client holds a screen, keep the pipeline primed rather than starting a fresh
+    // round trip per frame - that trip costs several Present cycles of GPU queue depth
+    // (measured ~20ms), so serialising it capped delivery at Present/3, ie 40fps at 120Hz.
+    //
+    // what bounds production is the total frame count in the pipeline, not any one stage:
+    // if the reader stops consuming, the count stays at the cap and submission stops, which
+    // is what keeps production tracking demand. an earlier version gated on each stage
+    // separately, which meant nothing could be submitted until the previous frame had been
+    // fully consumed, exposing the whole pipeline latency once per delivered frame. filling
+    // all three ring slots is the other extreme and was worse than serialising: concurrent
+    // StretchRect + DMA pairs contend with the game's own GPU use and stalled it for seconds.
+    constexpr size_t CAPTURE_MAX_IN_FLIGHT = 2;
+
+    for (int screen = 0; screen < static_cast<int>(GRAPHICS_CAPTURE_SCREEN_NO); screen++) {
+        const size_t in_flight = d3d9_readback::pending_capture_count(screen)
+                + (CAPTURE_PENDING_LOCKS[screen].has_value() ? 1 : 0)
+                + (CAPTURE_READ_IN_FLIGHT[screen] ? 1 : 0)
+                + (graphics_capture_has_ready_frame(screen) ? 1 : 0);
+        if (in_flight >= CAPTURE_MAX_IN_FLIGHT) {
+            continue;
+        }
+
+        const bool continuous = graphics_capture_continuous_active(screen);
+        const bool requested = !continuous && graphics_capture_request_take(screen);
+        if (!continuous && !requested) {
+            continue;
+        }
+
+        IDirect3DSwapChain9 *swap_chain = nullptr;
+        HRESULT hr = wrapped_device->get_screenshot_swap_chain(screen, &swap_chain);
+        if (FAILED(hr) || swap_chain == nullptr) {
+            // transient at worst (e.g. mode change); a continuous screen just tries again
+            // next Present, but a one-shot caller is already blocked waiting on this
+            if (requested) {
+                graphics_capture_skip(screen);
+            }
+            continue;
+        }
+
+        if (!d3d9_readback::submit_capture(device, swap_chain, screen) && requested) {
+            graphics_capture_skip(screen);
+        }
+        swap_chain->Release();
     }
 }
