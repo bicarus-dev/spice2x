@@ -62,6 +62,13 @@ namespace api {
             double interval_us_max = 0;
             int interval_count = 0;
 
+            // writer->write() covers both the encode and the blocking socket send, so a
+            // slow encode (e.g. a periodic H.264 keyframe) and a slow/backed-up reader
+            // look the same here - separate them only if this turns out to matter
+            double write_us_total = 0;
+            double write_us_max = 0;
+            int write_count = 0;
+
             bool has_last_send = false;
             std::chrono::steady_clock::time_point last_send;
             std::chrono::steady_clock::time_point last_log = std::chrono::steady_clock::now();
@@ -80,11 +87,13 @@ namespace api {
 
             log_info("api::stream",
                     "delivery to {} us (avg/max/n): capture {:.0f}/{:.0f}/{}, "
-                    "interval {:.0f}/{:.0f}/{}, misses {}",
+                    "interval {:.0f}/{:.0f}/{}, write {:.0f}/{:.0f}/{}, misses {}",
                     address,
                     stats.capture_us_total / stats.capture_count, stats.capture_us_max, stats.capture_count,
                     stats.interval_count ? stats.interval_us_total / stats.interval_count : 0.0,
                     stats.interval_us_max, stats.interval_count,
+                    stats.write_count ? stats.write_us_total / stats.write_count : 0.0,
+                    stats.write_us_max, stats.write_count,
                     stats.miss_count);
 
             stats.capture_us_total = 0;
@@ -94,6 +103,9 @@ namespace api {
             stats.interval_us_total = 0;
             stats.interval_us_max = 0;
             stats.interval_count = 0;
+            stats.write_us_total = 0;
+            stats.write_us_max = 0;
+            stats.write_count = 0;
         }
 
         // a viewer leaving is normally noticed by a failing send, so a stream with no frame
@@ -530,7 +542,15 @@ namespace api {
                                 stats.capture_count++;
 
                                 if (ok && frame.pixels) {
-                                    if (!writer->write(stream_send, frame)) {
+                                    const auto write_started = std::chrono::steady_clock::now();
+                                    const bool sent = writer->write(stream_send, frame);
+                                    const double write_us = std::chrono::duration<double, std::micro>(
+                                            std::chrono::steady_clock::now() - write_started).count();
+                                    stats.write_us_total += write_us;
+                                    stats.write_us_max = std::max(stats.write_us_max, write_us);
+                                    stats.write_count++;
+
+                                    if (!sent) {
                                         break;
                                     }
 
