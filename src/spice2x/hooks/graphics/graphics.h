@@ -142,16 +142,17 @@ bool graphics_screenshot_consume();
 
 inline constexpr size_t GRAPHICS_CAPTURE_SCREEN_NO = 4;
 
-// a screen stays continuously fed into the capture ring for as long as a stream client
-// holds it, rather than one submission per request - a single on-demand round trip through
-// the ring costs several Present cycles (GPU queue depth from vsync buffering), so keeping
-// several in flight overlaps that latency instead of paying it in full per delivered frame
+// a screen stays fed into the capture ring for as long as a stream client holds it, rather
+// than starting a fresh round trip per request - that round trip costs several Present
+// cycles of GPU queue depth (measured ~20ms), which capped delivery well under the
+// requested rate. one capture is in flight at a time, resubmitted once the last one has
+// actually been consumed, so production tracks demand instead of racing ahead of it
 void graphics_capture_continuous_start(int screen);
 void graphics_capture_continuous_stop(int screen);
 bool graphics_capture_continuous_active(int screen);
 bool graphics_capture_has_ready_frame(int screen);
-// for callers with no continuous claim (the one-shot api capture module): nothing is
-// feeding that screen's ring on their behalf, so they have to ask for the frame
+// for callers with no continuous claim (the api capture module): nothing is feeding that
+// screen's ring on their behalf, so they have to ask for each frame
 void graphics_capture_request_once(int screen);
 bool graphics_capture_request_take(int screen);
 void graphics_capture_enqueue(int screen, uint8_t *data, size_t width, size_t height);
