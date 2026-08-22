@@ -5,6 +5,7 @@
 
 #include "graphics.h"
 
+#include <atomic>
 #include <chrono>
 #include <set>
 #include <vector>
@@ -64,24 +65,12 @@ static std::vector<WNDPROC> WNDPROC_CUSTOM {};
 static bool GRAPHICS_SCREENSHOT_TRIGGER = false;
 static std::set<int> GRAPHICS_SCREENS { 0 };
 static std::mutex GRAPHICS_SCREENS_M {};
-static std::vector<int> GRAPHICS_CAPTURE_SCREENS;
-static std::mutex GRAPHICS_CAPTURE_SCREENS_M {};
+static std::atomic<bool> GRAPHICS_CAPTURE_CONTINUOUS[GRAPHICS_CAPTURE_SCREEN_NO] {};
 static CaptureData GRAPHICS_CAPTURE_BUFFER[GRAPHICS_CAPTURE_SCREEN_NO] {};
 static std::mutex GRAPHICS_CAPTURE_BUFFER_M[GRAPHICS_CAPTURE_SCREEN_NO] {};
 static std::condition_variable GRAPHICS_CAPTURE_CV[GRAPHICS_CAPTURE_SCREEN_NO] {};
 static bool GRAPHICS_CAPTURE_SKIP_SIGNAL[GRAPHICS_CAPTURE_SCREEN_NO] {};
 static constexpr std::chrono::milliseconds GRAPHICS_CAPTURE_RECEIVE_TIMEOUT {2000};
-
-static void graphics_capture_cancel_pending(int screen) {
-    std::lock_guard<std::mutex> lock(GRAPHICS_CAPTURE_SCREENS_M);
-
-    for (auto it = GRAPHICS_CAPTURE_SCREENS.rbegin(); it != GRAPHICS_CAPTURE_SCREENS.rend(); ++it) {
-        if (*it == screen) {
-            GRAPHICS_CAPTURE_SCREENS.erase(std::next(it).base());
-            return;
-        }
-    }
-}
 
 static std::optional<graphics_orientation> target_orientation_on_boot;
 static UINT target_refresh_rate_on_boot = 0;
@@ -1439,22 +1428,28 @@ bool graphics_screenshot_consume() {
     return flag;
 }
 
-void graphics_capture_trigger(int screen) {
-    std::lock_guard<std::mutex> lock(GRAPHICS_CAPTURE_SCREENS_M);
+void graphics_capture_continuous_start(int screen) {
+    if (screen < 0 || screen >= static_cast<int>(GRAPHICS_CAPTURE_SCREEN_NO)) {
+        return;
+    }
 
-    GRAPHICS_CAPTURE_SCREENS.push_back(screen);
+    GRAPHICS_CAPTURE_CONTINUOUS[screen] = true;
 }
 
-bool graphics_capture_consume(int *screen) {
-    std::lock_guard<std::mutex> lock(GRAPHICS_CAPTURE_SCREENS_M);
+void graphics_capture_continuous_stop(int screen) {
+    if (screen < 0 || screen >= static_cast<int>(GRAPHICS_CAPTURE_SCREEN_NO)) {
+        return;
+    }
 
-    if (GRAPHICS_CAPTURE_SCREENS.empty()) {
+    GRAPHICS_CAPTURE_CONTINUOUS[screen] = false;
+}
+
+bool graphics_capture_continuous_active(int screen) {
+    if (screen < 0 || screen >= static_cast<int>(GRAPHICS_CAPTURE_SCREEN_NO)) {
         return false;
     }
 
-    *screen = GRAPHICS_CAPTURE_SCREENS.back();
-    GRAPHICS_CAPTURE_SCREENS.pop_back();
-    return true;
+    return GRAPHICS_CAPTURE_CONTINUOUS[screen];
 }
 
 void graphics_capture_enqueue(int screen, uint8_t *data, size_t width, size_t height) {
@@ -1503,15 +1498,17 @@ bool graphics_capture_receive_raw(int screen, std::shared_ptr<uint8_t[]> &out,
 
     if (!ready) {
         lock.unlock();
-        graphics_capture_cancel_pending(screen);
         return false;
     }
 
-    if (GRAPHICS_CAPTURE_SKIP_SIGNAL[screen]) {
+    // an actual frame always wins over a leftover skip signal: continuous capture means a
+    // ring failure is no longer 1:1 with whichever request happens to be waiting right now
+    if (GRAPHICS_CAPTURE_BUFFER[screen].data == nullptr) {
         GRAPHICS_CAPTURE_SKIP_SIGNAL[screen] = false;
         lock.unlock();
         return false;
     }
+    GRAPHICS_CAPTURE_SKIP_SIGNAL[screen] = false;
 
     auto &capture = GRAPHICS_CAPTURE_BUFFER[screen];
     auto capture_data = capture.data;

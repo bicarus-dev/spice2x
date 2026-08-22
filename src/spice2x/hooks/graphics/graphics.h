@@ -142,8 +142,13 @@ bool graphics_screenshot_consume();
 
 inline constexpr size_t GRAPHICS_CAPTURE_SCREEN_NO = 4;
 
-void graphics_capture_trigger(int screen);
-bool graphics_capture_consume(int *screen);
+// a screen stays continuously fed into the capture ring for as long as a stream client
+// holds it, rather than one submission per request - a single on-demand round trip through
+// the ring costs several Present cycles (GPU queue depth from vsync buffering), so keeping
+// several in flight overlaps that latency instead of paying it in full per delivered frame
+void graphics_capture_continuous_start(int screen);
+void graphics_capture_continuous_stop(int screen);
+bool graphics_capture_continuous_active(int screen);
 void graphics_capture_enqueue(int screen, uint8_t *data, size_t width, size_t height);
 void graphics_capture_skip(int screen);
 // on success `out` owns packed 24bpp RGB pixels, width * height * 3 bytes

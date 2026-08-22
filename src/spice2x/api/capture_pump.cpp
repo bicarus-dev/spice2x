@@ -27,7 +27,6 @@ namespace api::capture_pump {
         }
 
         std::lock_guard<std::mutex> lock(CONSUMER_M[screen]);
-        graphics_capture_trigger(screen);
         return graphics_capture_receive_raw(
                 screen, out, divide, timestamp, width, height);
     }
@@ -44,6 +43,7 @@ namespace api::capture_pump {
         }
 
         CLAIMED[screen] = true;
+        graphics_capture_continuous_start(screen);
         return true;
     }
 
@@ -51,6 +51,8 @@ namespace api::capture_pump {
         if (!valid_screen(screen)) {
             return;
         }
+
+        graphics_capture_continuous_stop(screen);
 
         std::lock_guard<std::mutex> lock(CLAIMED_M);
         CLAIMED[screen] = false;

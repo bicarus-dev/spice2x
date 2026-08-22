@@ -770,28 +770,25 @@ void graphics_d3d9_process_capture(
         try_deliver_capture(screen);
     });
 
-    int screen = 0;
-    if (!graphics_capture_consume(&screen)) {
-        return;
-    }
+    // while a client holds a screen, keep every ring slot full instead of submitting one
+    // capture per request: a single on-demand round trip costs several Present cycles
+    // (GPU queue depth from vsync buffering), measured live at ~20ms - serializing one
+    // request at a time made every delivered frame pay that latency in full. submit_capture
+    // is a no-op once a screen's slots are all in flight, so this naturally self-limits.
+    for (int screen = 0; screen < static_cast<int>(GRAPHICS_CAPTURE_SCREEN_NO); screen++) {
+        if (!graphics_capture_continuous_active(screen)) {
+            continue;
+        }
 
-    IDirect3DSwapChain9 *swap_chain = nullptr;
-    HRESULT hr = wrapped_device->get_screenshot_swap_chain(screen, &swap_chain);
-    if (FAILED(hr) || swap_chain == nullptr) {
-        log_warning("graphics::d3d9",
-                "failed to get swap chain for screen {}, hr={}", screen, FMT_HRESULT(hr));
-        graphics_capture_skip(screen);
-        return;
-    }
+        IDirect3DSwapChain9 *swap_chain = nullptr;
+        HRESULT hr = wrapped_device->get_screenshot_swap_chain(screen, &swap_chain);
+        if (FAILED(hr) || swap_chain == nullptr) {
+            // transient at worst (e.g. mode change); nothing waits on this specific
+            // attempt the way a one-shot request would, so just try again next Present
+            continue;
+        }
 
-    // queues a cheap GPU-side copy and returns immediately - never blocks the render thread
-    // waiting on the GPU the way a direct GetRenderTargetData call would
-    const bool submitted = d3d9_readback::submit_capture(device, swap_chain, screen);
-    swap_chain->Release();
-
-    if (!submitted) {
-        // every ring slot is still waiting on the GPU - streaming can afford to miss this
-        // frame, the game's frame time cannot
-        graphics_capture_skip(screen);
+        d3d9_readback::submit_capture(device, swap_chain, screen);
+        swap_chain->Release();
     }
 }
