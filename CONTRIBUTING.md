@@ -105,5 +105,5 @@ if (conditional)
   * We don't use GSL.
   * Don't throw exceptions.
   * Stick to smart pointers. For interfacing with C Win32 API and raw buffers, use `unique_plain_ptr`.
-  * Writing in C is also completely acceptable.
+  * Writing in C is also completely acceptable but prefer to use RAII patterns.
 * Other than that, there are no strict rules for code formatting, but please attempt to emulate the style around the code you are modifying.
